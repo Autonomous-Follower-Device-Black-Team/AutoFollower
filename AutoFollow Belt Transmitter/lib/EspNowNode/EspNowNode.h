@@ -5,24 +5,32 @@
 #include <ESP32_NOW.h>
 #include <WiFi.h>
 #include <esp_mac.h>
+#include <esp_wifi.h>
 
-#define TaskDelayLength pdMS_TO_TICKS(2000)
+#define TaskDelayLength pdMS_TO_TICKS(100)
 
 typedef BaseType_t (* ProcessDataCallback)(const char *);
 
-const uint8_t ESPNOW_WIFI_CHANNEL = 6;
-const uint8_t ESPNOW_DATA_SIZE = 64;
-const int ESPNOW_TASK_DEPTH = 8192;
+const uint8_t ESPNOW_WIFI_CHANNEL = 6;      // Wi-Fi channel that system transmission occurs in.
+const uint8_t ESPNOW_DATA_SIZE = 8;         // Size of system data payload sent (in bytes)
+const int ESPNOW_TASK_DEPTH = 8192;         // Stack size of ESP-NOW tasks.
 
 // ESP32-S3 Mac addrresses.
 const uint8_t dev_S3_A[] = {0x24, 0xEC, 0x4A, 0x09, 0xC8, 0x00};
-const uint8_t dev_S3_B[] = {0x24, 0xEC, 0x4A, 0x09, 0xC8, 0x00};
+const uint8_t dev_S3_B[] = {0x24, 0xEC, 0x4A, 0x09, 0xC8, 0xC8};
+
+enum _mode : char {
+    Transmitter = 'T',  // Transmitter mode.
+    Receiver = 'R',     // Receiver mode.
+    Unassigned = 'U'    // Unassigned.
+};
+typedef enum _mode Mode;
 
 enum _header : uint8_t {
-    ACK,            // Header indidcating this is an acknowledgement of the previously received message. Might be uselss.
-    HANDSHAKE,      // Header indicating this is a connection establishing message.
-    WAVE,           // Header indicating this is a connection terminating message.
-    TRGGER_PING     // Header indicating that a trigger event is about to happen.
+    ACK = 10,            // Header indidcating this is an acknowledgement of the previously received message. Might be uselss.
+    HANDSHAKE = 11,      // Header indicating this is a connection establishing message.
+    WAVE = 13,           // Header indicating this is a connection terminating message.
+    TRIGGER_PING = 14    // Header indicating that a trigger event is about to happen.
 };
 typedef enum _header Header;
 
@@ -36,75 +44,94 @@ typedef enum _ack_messages AckMessage;
 #define HS_MSG "Received Handshake Request"
 #define WV_MSG "Received Wave Request"
 
-struct _network_info {
-    char data1[ESPNOW_DATA_SIZE];
-    char data2[ESPNOW_DATA_SIZE];
-};
-typedef struct _network_info NetworkInfo;
-
 struct _esp_now_packet {
-    Header header;                  // Holds info on the kind of data being exchanged.
-    AckMessage ack;                 // Holds info on the kind of data last received by the sending node.
-    char data[ESPNOW_DATA_SIZE];    // Holds data currently being exchanged.
+    Header header;                      // Holds info on the kind of data being exchanged.
+    AckMessage ack;                     // Holds info on the kind of data last received by the sending node.
+    char data[ESPNOW_DATA_SIZE * 8];    // Holds data currently being exchanged.
 };
 typedef struct _esp_now_packet ESP_NOW_PACKET;
 
-extern TaskHandle_t esp_now_tx_rx_handle;
-extern TaskHandle_t esp_now_process_data_handle;
-extern TaskHandle_t esp_now_broadcast_handle;
+extern TaskHandle_t esp_now_tx_rx_handle;           // Transmission and Reception task handle.
+extern TaskHandle_t esp_now_process_data_handle;    // Data processing task handle.
 
-void esp_now_tx_rx_task(void *pvParams);
-void esp_now_process_data_task(void *pvParams);
-void esp_now_broadcast_task(void *pvParams);
+void esp_now_tx_rx_task(void *pvParams);            // Transmit and receive information from peer.
+void esp_now_process_data_task(void *pvParams);     // Process data received.
 
 class EspNowNode : ESP_NOW_Peer {
     private:
-        inline static bool isMaster = false;
-        bool esp_now_setup = false;
-        bool waitingForData = false;
-        bool justStarted = true;
-        bool dataExchangeComplete = false;
-        bool isPaused = false;
-        bool hasFoundPeer = false;
+        Mode mode = Mode::Unassigned;               // Is this node is a transmitter or receiver.
+        bool esp_now_setup = false;                 // Is ESP Now setup for this node.        
+        bool waitingForData = false;                // Is this node waiting for data.
+        bool justStarted = true;                    // Has this node just begun in network.
+        bool isPaused = false;                      // Has this node (transmission or reception) been paused.
+        bool hasFoundPeer = false;                  // Has this node found its peer. 
+        bool ackRequired = false;
         
-        uint8_t peerMacAddress[6];
-        inline static NetworkInfo infoToSend;
-        inline static ESP_NOW_PACKET outgoingData;
-        inline static ESP_NOW_PACKET incomingData;
+        uint8_t peerMacAddress[6];                  // Address of this nodes peer.
+        inline static ESP_NOW_PACKET outgoingData;  // Storage for the data to be transmitted from this node.
+        inline static ESP_NOW_PACKET incomingData;  // storage for the data received by this node.
 
+        /**
+         * Intializes Wi-Fi on the ESP, specifically begins
+         * Wi-Fi in station mode a required by ESP-NOW.
+         */
         void initWifi();
+
+        /**
+         * Initializes ESP Now for use on the ESP.
+         */
         void initESPNOW();
+
+        /**
+         * Transmits this nodes message over ESP NOW.
+         */
         bool send_message();
-        void buildTransmission(Header head, AckMessage ack, String data);
+
+        /**
+         * Creates this nodes message to be transmitted over 
+         * ESP-NOW.
+         */
+        void buildTransmission();
+
+        /**
+         * Re regsiters the peer of this node.
+         */
         void reRegisterPeer();
 
+        /**
+         * Grab the header of the packet to be processed.
+         */
         Header getHeaderToProcess();
-        AckMessage getAckToProcess();
+
+        /**
+         * Grab the payload of the packet to be processed.
+         */
         const char* getDataToProcess();
 
+        /**
+         * Initialize all system tasks.
+         */
         void initTasks();
+
+        /**
+         * Start the system Tx/Rx task.
+         */
         BaseType_t beginCommunicationTask();
+
+        /**
+         * Start the system data processing task.
+         */
         BaseType_t beginProcessDataTask();
-        static BaseType_t slaveProcessAck(const char *data);
-        static BaseType_t masterProcessAck(const char *data);
-        static BaseType_t processHandshake(const char* data);
-        static BaseType_t masterProcessWifiPasswordReceived(const char *data);
-        BaseType_t callMasterProcessDataCallback();
-        BaseType_t callSlaveProcessDataCallback();
 
-        String findMasterNextData();
-        String findSlaveNextData();
-
-        ProcessDataCallback processAckCallback = NULL;
-        ProcessDataCallback processHandshakeCallback = processHandshake;
-        ProcessDataCallback processWiFiSSIDCallback = NULL;
-        ProcessDataCallback processWiFiPasswordCallback = NULL;
-        ProcessDataCallback processCameraIPCallback = NULL;
+        ProcessDataCallback handshakeCallback = NULL;
+        ProcessDataCallback waveCallback = NULL;
+        ProcessDataCallback infoReceivedCallback = NULL;
 
     public:
         EspNowNode( 
                 const uint8_t* peerMacAddress,      // Mac address of the device to be registered as this nodes peer.
-                bool masterMode                     // Registers this node as the master or slave in the network. There can only be one Master.
+                Mode nodeMode,                      // This nodes Mode in network (tranmitter/receiver).
+                bool ackRequired = false            // Does this node require EXPLICIT acknowledgement. Defaults to `false`.
             ) :
             ESP_NOW_Peer(peerMacAddress, ESPNOW_WIFI_CHANNEL, WIFI_IF_STA, NULL)
         {   
@@ -123,50 +150,41 @@ class EspNowNode : ESP_NOW_Peer {
             tmp = "Nothing incoming";
             sprintf(incomingData.data, "%s", tmp.c_str());
 
-            // Initialize info packet.
-            sprintf(infoToSend.data1, "%s", "Empty");
-            sprintf(infoToSend.data2, "%s", "Empty");
-
-            // Select mode. Master begins ready to transmit. Slave begins waiting.
-            isMaster = masterMode;
-            waitingForData = (masterMode) ? false : true;
-
-            // Register ack processing callback based on mode.
-            processAckCallback = (masterMode) ? masterProcessAck : slaveProcessAck;
-            processWiFiPasswordCallback = (masterMode) ? masterProcessWifiPasswordReceived : NULL;
+            // Select mode. Transmitter begins ready to transmit. Receiver begins waiting.
+            waitingForData = (nodeMode == Mode::Transmitter) ? false : true;
         }
         
         // Destructor to preserve memory integrity when ending ESP-NOW transmission.
         ~EspNowNode() { remove(); }
         
-        // Methods to register appropriate callbacks. To be further fleshed out and changed.
-        bool registerProcessWiFiSSIDCallBack(ProcessDataCallback pcb);
-        bool registerProcessWiFiPasswordCallBack(ProcessDataCallback pcb);
-        bool registerProcessCameraIPCallBack(ProcessDataCallback pcb);
+        // Methods to register appropriate callbacks. To be further fleshed out and changed.        
+        bool registerProcessHandshakeCallBack(ProcessDataCallback pcb);
+        bool registerProcessWaveCallBack(ProcessDataCallback pcb);
+        bool registerProcessInfoReceivedCallBack(ProcessDataCallback pcb);
 
         // Methods to facilitate ESP-NOW transmission between nodes.
-        bool startTransmission();
-        bool endTransmission();
-        void pauseTransmission();
-        void unpauseTransmission();
+        bool start();
+        bool end();
+        void pause();
+        void unpause();
         bool isTransmissionPaused();
         bool is_esp_now_setup();
-        bool isNodeMaster();
+        bool isNodeTransmitter();
         
         // Methods for processing transmission and reception events between nodes.
         void onReceive(const uint8_t *data, size_t len, bool broadcast) override;
         void onSent(bool success) override;
 
-        bool transmit(Header head, AckMessage ack, String data);
+        bool transmit();
         bool readyToTransmit(); 
         void setReadyToTransmit(bool status);
         Header determineNextHeader();
         AckMessage determineNextAck();
-        String getNextData();
+        String determineNextData();
 
-        bool callProcessDataCallback();
-        void addInfoToSend(const char *info1, const char *info2);
-        bool credentialsPassedThrough();
+        void showDataReceived();
+        void showDataTransmitted();
+        bool proccessPacket();
         void reRegister();
 
         // Methods for identifying info on nodes in the network.
