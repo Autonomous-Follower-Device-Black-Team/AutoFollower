@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-#include "botConfig.h"
+#include "Config.h"
 #include "EspNowNode.h"
 #include "Device.h"
 

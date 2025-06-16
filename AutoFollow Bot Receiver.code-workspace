@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "AutoFollow Bot Receiver"
+		},
+		{
+			"path": "lib_common"
 		}
 	],
 	"settings": {}

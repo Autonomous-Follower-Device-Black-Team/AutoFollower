@@ -1,8 +1,4 @@
 #include "EspNowNode.h"
-#include <Arduino.h>
-#include <ESP32_NOW.h>
-#include <WiFi.h>
-#include <esp_mac.h>
 
 // Define task handles.
 TaskHandle_t esp_now_tx_rx_handle = NULL;
@@ -179,11 +175,16 @@ bool EspNowNode::registerProcessInfoReceivedCallBack(ProcessDataCallback pcb) {
     return true;
 }   
 
+bool EspNowNode::registerDataSentCallBack(ProcessDataCallback pcb) {
+    dataSentCallBack = pcb;
+    return true;
+}
+
 bool EspNowNode::start() {
 
     // Ensure proper callbacks are registered.
     bool success = false;
-    success = (handshakeCallback != NULL && waveCallback != NULL && infoReceivedCallback != NULL);
+    success = (handshakeCallback != NULL && waveCallback != NULL && infoReceivedCallback != NULL && dataSentCallBack != NULL);
     
     // Only start if callbacks are all good.
     if(success) {
@@ -234,6 +235,7 @@ void EspNowNode::onReceive(const uint8_t *data, size_t len, bool broadcast) {
 
 void EspNowNode::onSent(bool success) {
     if(ackRequired) this->waitingForData = true;
+    dataSentCallBack("");
 }
 
 bool EspNowNode::is_esp_now_setup() { return esp_now_setup; }

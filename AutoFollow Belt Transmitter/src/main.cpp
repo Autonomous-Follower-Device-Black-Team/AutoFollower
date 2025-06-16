@@ -1,10 +1,9 @@
 #include <Arduino.h>
-
-#include "beltConfig.h"
-#include "EspNowNode.h"
+#include "config.h"
 #include "Device.h"
 
-Device belt;
+SocConfig soc = SocConfig::NONE;
+Device belt(soc);
 
 void setup() {
     Serial.begin(BAUD_RATE);    
@@ -14,9 +13,22 @@ void setup() {
         delay(500);
     }
 
-    belt.init();
+    //belt.init();
+    Serial.print(TaskStackDepth::tsd_DRIVE);
+    belt.getPeripheralManager()->initPeripherals();
 }
 
+bool success = false;
+float distance = -1.0;
 void loop() {
-
+    
+    success = belt.getPeripheralManager()->fetchUS(SensorID::transducer)->readSensor(US_READ_TIME);
+    if(success) {
+        distance = belt.getPeripheralManager()->fetchUS(SensorID::transducer)->getDistanceReading();
+        Serial.printf("Distance: %f\n", distance);
+    }
+    else {
+        Serial.println("Reading unsuccesful.");
+    }
+    vTaskDelay(1000);
 }

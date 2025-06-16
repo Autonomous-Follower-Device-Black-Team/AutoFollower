@@ -7,6 +7,7 @@
 #include <esp_mac.h>
 #include <esp_wifi.h>
 
+
 #define TaskDelayLength pdMS_TO_TICKS(100)
 
 typedef BaseType_t (* ProcessDataCallback)(const char *);
@@ -18,6 +19,10 @@ const int ESPNOW_TASK_DEPTH = 8192;         // Stack size of ESP-NOW tasks.
 // ESP32-S3 Mac addrresses.
 const uint8_t dev_S3_A[] = {0x24, 0xEC, 0x4A, 0x09, 0xC8, 0x00};
 const uint8_t dev_S3_B[] = {0x24, 0xEC, 0x4A, 0x09, 0xC8, 0xC8};
+
+// ESP32 Mac addresses.
+const uint8_t dev_C[] = {0x10, 0x06, 0x1C, 0x97, 0x94, 0x38};
+const uint8_t dev_D[] = {0x10, 0x06, 0x1C, 0x98, 0x56, 0x28};
 
 enum _mode : char {
     Transmitter = 'T',  // Transmitter mode.
@@ -126,6 +131,7 @@ class EspNowNode : ESP_NOW_Peer {
         ProcessDataCallback handshakeCallback = NULL;
         ProcessDataCallback waveCallback = NULL;
         ProcessDataCallback infoReceivedCallback = NULL;
+        ProcessDataCallback dataSentCallBack = NULL;
 
     public:
         EspNowNode( 
@@ -161,6 +167,7 @@ class EspNowNode : ESP_NOW_Peer {
         bool registerProcessHandshakeCallBack(ProcessDataCallback pcb);
         bool registerProcessWaveCallBack(ProcessDataCallback pcb);
         bool registerProcessInfoReceivedCallBack(ProcessDataCallback pcb);
+        bool registerDataSentCallBack(ProcessDataCallback pcb);
 
         // Methods to facilitate ESP-NOW transmission between nodes.
         bool start();
