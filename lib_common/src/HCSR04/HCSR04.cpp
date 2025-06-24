@@ -182,4 +182,5 @@ float HCSR04::getDistanceReading() {
 
 float HCSR04::getLastBufferAverage() { return lastBufferAverage; }
 
+int HCSR04::getTriggerPinNumber() { return trigger; }
 int HCSR04::getEchoPinNumber() { return echo; }

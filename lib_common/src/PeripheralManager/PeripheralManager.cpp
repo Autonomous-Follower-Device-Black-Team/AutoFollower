@@ -22,14 +22,21 @@ void trigger_USS_task(void *pvPeripheralManager) {
     // Grab distance sensing transducer.
     HCSR04 *transducer = manager->fetchUS(SensorID::transducer);
     bool readingGood;
+    float adjDistance, adjAverage;
 
     // Begin task loop.
     for(;;) {
 
         // Wait for notifcation before trigger.
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  
 
-        
+        // Trigger.
+        readingGood = transducer->readSensor(US_READ_TIME);
+        adjDistance = transducer->getDistanceReading() * 2 * 2.54;
+        adjAverage = transducer->getLastBufferAverage() * 2 * 2.54;
+        if(readingGood) Serial.printf("Distance: %f, Average: %f\n", adjDistance, adjAverage);
+        else log_e("Ultrasonic reading Unsuccesful."); 
+        //vTaskDelay(1000);
     }
 }
 
@@ -38,7 +45,7 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
 
     // Begin task loop.
     for(;;) {
-
+        vTaskDelay(1000);
     }
 }
 
@@ -88,31 +95,45 @@ void on_right_us_echo_changed(void *arg) {
 PeripheralManager::PeripheralManager(Device *dev) : dev(dev) { 
     if(dev->isTransmitter()) {
         constructBeltPeripherals();
-        attachBeltInterrupts();
+        log_e("Belt Peripheral Setup Complete.");
     }
     else {
         constructBotPeripherals();
-        attachBotInterrupts();
+        log_e("Bot Peripheral Setup Complete.");
     }
 }
 
 /**
- * Initialize the 4 US sensors, Mic, and BME.
+ * Initialize the US System and Drive System.
  */
 void PeripheralManager::initPeripherals(){
     initUS();
     initDriveSystem();
 }
 
-/**)
- * Initialze the Sentry's 4 Ultrasonic Sensors.
+void PeripheralManager::attachInterrupts() {
+    if(dev->isTransmitter()) {
+        attachBeltInterrupts();
+        log_e("Belt interrupts attached.");
+    }
+    else {
+        attachBotInterrupts();
+        log_e("Bot interrupts attached.");
+    }   
+}
+
+/**
+ * Initialze the Ultrasonic Sensors.
  */
 void PeripheralManager::initUS() {
 
     // Initialize the ultrasonic sensors.
     transducerUS->init();
-    leftUS->init();
-    rightUS->init();
+    if(!dev->isTransmitter()) {
+        leftUS->init();
+        rightUS->init();
+    }
+    log_e("Ultrasonic Initialized.");
 }
 
 void PeripheralManager::attachBeltInterrupts() {
@@ -124,6 +145,7 @@ void PeripheralManager::attachBeltInterrupts() {
                 transducerUS, 
                 CHANGE
             );
+            log_e("Succesfully Attached Belt Transducer Interrupt (ESP32).");
             break;
 
         case SocConfig::ESP32_S3_8MB :
@@ -133,6 +155,7 @@ void PeripheralManager::attachBeltInterrupts() {
                 transducerUS, 
                 CHANGE
             );
+            log_e("Succesfully Attached Belt Transducer Interrupt (ESP32-S3).");
             break;
         
         case SocConfig::NONE :
@@ -168,7 +191,7 @@ void PeripheralManager::attachBotInterrupts() {
                 rightUS, 
                 CHANGE
             );
-            
+            log_e("Succesfully Attached Bot Transducer Interrupt (ESP32).");
             break;
 
         case SocConfig::ESP32_S3_8MB :
@@ -192,6 +215,7 @@ void PeripheralManager::attachBotInterrupts() {
                 rightUS, 
                 CHANGE
             );
+            log_e("Succesfully Attached Bot Transducer Interrupt (ESP32-S3).");
             break;
         
         case SocConfig::NONE :
@@ -211,12 +235,12 @@ void PeripheralManager::beginTasks() {
     BaseType_t taskCreated;
 
     taskCreated = beginTriggerDistanceUssTask();
-    if(taskCreated != pdPASS) Serial.printf("Transducer trigger task not created. Fail Code: %d\n", taskCreated);
-    else Serial.println("Transducer trigger task created.");
+    if(taskCreated != pdPASS) log_e("Transducer trigger task not created. Fail Code: %d\n", taskCreated);
+    else log_e("Transducer trigger task created.");
 
     taskCreated = beginPollObstacleDetectionUssTask();
-    if(taskCreated != pdPASS) Serial.printf("Read Ultrasonic Sensor task not created. Fail Code: %d\n", taskCreated);
-    else Serial.println("Read Ultrasonic Sensor task created.");
+    if(taskCreated != pdPASS) log_e("Read Ultrasonic Sensor task not created. Fail Code: %d\n", taskCreated);
+    else log_e("Read Ultrasonic Sensor task created.");
     
 }
 

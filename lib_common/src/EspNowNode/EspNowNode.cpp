@@ -7,12 +7,9 @@ TaskHandle_t esp_now_process_data_handle = NULL;
 void esp_now_tx_rx_task(void *pvParams) {
     // Setup.
     EspNowNode *node = static_cast<EspNowNode *>(pvParams);
-    int msg_count = 0;
-    String str;
-    int bufferSize = 100;
-    char buffer[bufferSize];
-    bool success = false;
-
+    bool txGood, txTimeout, tryToTx, printRxMsg;
+    ulong lastTimeSent = 0;
+    
     // Task loop.
     for(;;) {
 
@@ -22,11 +19,17 @@ void esp_now_tx_rx_task(void *pvParams) {
         }
 
         // Ready to transmit.
-        if(node->readyToTransmit() == true && !node->isTransmissionPaused()) {
+        txTimeout = (millis() - lastTimeSent) > ACK_TIMEOUT_MS;
+        tryToTx = (node->readyToTransmit() == true && !node->isTransmissionPaused()) || (txTimeout);
+        if(tryToTx) {
 
             //node->reRegister();
-            success = node->transmit();
-            if(success == false) {
+            txGood = node->transmit();
+            if(txGood) {
+                lastTimeSent = millis();
+                printRxMsg = true;
+            }
+            else {
                 Serial.println("Failed Transmission");
                 node->reRegister();
             }
@@ -34,8 +37,11 @@ void esp_now_tx_rx_task(void *pvParams) {
         
         // Ready to receive.
         else {
-            if(node->isNodeTransmitter()) Serial.println("Waiting for Acknowledgment From Receiver (Bot)");
-            else Serial.println("Waiting for acknowledgement from Transmitter (Belt)");
+            if(printRxMsg && false) {
+                if(node->isNodeTransmitter()) Serial.println("Waiting for Acknowledgment From Receiver (Bot)");
+                else Serial.println("Waiting for acknowledgement from Transmitter (Belt)");
+                printRxMsg = false;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(TaskDelayLength));
     }
@@ -58,7 +64,7 @@ void esp_now_process_data_task(void *pvParams) {
         
         // Call the proper call back based on data sent.
         //log_e("processing data called");
-        node->showDataReceived();
+        //node->showDataReceived();
         success = node->proccessPacket();
         if(success) node->setReadyToTransmit(true);
         //else log_e("Data processing failed.");
@@ -245,7 +251,7 @@ bool EspNowNode::isNodeTransmitter() { return mode == Mode::Transmitter;}
 bool EspNowNode::transmit() { 
     // Construct the transmission and send it.
     buildTransmission();
-    showDataTransmitted();
+    //showDataTransmitted();
     return send_message(); 
 }
 
@@ -406,7 +412,7 @@ AckMessage EspNowNode::determineNextAck() {
 String EspNowNode::determineNextData() {
     
     // Send current system time.
-    String nextDataToSend = String(millis());
+    String nextDataToSend = String(micros());
 
     // Return;
     return nextDataToSend;

@@ -65,8 +65,9 @@ class PeripheralManager {
          */
         PeripheralManager(Device *dev);
 
-        void initPeripherals();      // Initialize all peripherals.
-        void beginTasks();           // Begin all tasks.
+        void initPeripherals();     // Initialize all peripherals.
+        void attachInterrupts();    // Attach all interrupts.     
+        void beginTasks();          // Begin all tasks.
 
     //************************************************************************************/
     

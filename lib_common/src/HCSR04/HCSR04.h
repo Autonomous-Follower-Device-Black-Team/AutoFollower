@@ -185,6 +185,7 @@ class HCSR04 {
 
         float getLastBufferAverage();
 
+        int getTriggerPinNumber();
         int getEchoPinNumber();
 };
 

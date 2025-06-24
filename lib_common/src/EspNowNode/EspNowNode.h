@@ -7,8 +7,8 @@
 #include <esp_mac.h>
 #include <esp_wifi.h>
 
-
 #define TaskDelayLength pdMS_TO_TICKS(100)
+#define ACK_TIMEOUT_MS 10000     // Transmission timeout length (ms).
 
 typedef BaseType_t (* ProcessDataCallback)(const char *);
 
@@ -158,6 +158,8 @@ class EspNowNode : ESP_NOW_Peer {
 
             // Select mode. Transmitter begins ready to transmit. Receiver begins waiting.
             waitingForData = (nodeMode == Mode::Transmitter) ? false : true;
+            this->ackRequired = ackRequired;
+            this->mode = nodeMode;
         }
         
         // Destructor to preserve memory integrity when ending ESP-NOW transmission.
