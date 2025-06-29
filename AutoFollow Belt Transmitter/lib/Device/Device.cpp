@@ -7,8 +7,13 @@ void trigger_timer_callback(void *arg) {
     Device *dev = static_cast<Device *>(arg);
     dev->setTriggerTimerFlag(true);
     dev->timer_on = false;
-    //xTaskNotify(ping_timer_task_handle, -1, eNoAction);
-    xTaskNotify(trigger_USS_task_handle, -1, eNoAction);
+    if(dev->isTransmitter()) {
+        xTaskNotify(trig_tx_transducer_task_handle, -1, eNoAction);
+    }
+    else {
+        xTaskNotify(trig_left_rx_transducer_task_handle, -1, eNoAction);
+        xTaskNotify(trig_right_rx_transducer_task_handle, -1, eNoAction);
+    }
 }
 
 void ping_timer_task(void *pvParams) {
@@ -66,9 +71,9 @@ void Device::init() {
 }
 
 void Device::startPeripheralManager()  {
+    manager->beginTasks();
     manager->initUS();
     manager->attachInterrupts();
-    manager->beginTasks();
 }
 
 void Device::startESPNow() {

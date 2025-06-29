@@ -12,11 +12,27 @@
 #define DEF_HP_EST_LIM 10
 
 #define OBS_LIM 30      // USS obstacle detection limit (inches).
-#define OBSTACLE_THRESHOLD_BREACHED  0x0001   // Mask representing that the Obstacle Detection Threshold of an HCSR04 Sensor has been passed.
-#define PRESENCE_THRESHOLD_BREACHED  0x0002   // Mask representing that the Presence Detection Threshold of an HCSR04 Sensor has been passed.
-#define STRONG_PRESENCE_BREACH 0x10         // Mask for when HPE breach is strong.
-#define MODERATE_PRESENCE_BREACH 0x08       // Mask for when HPE breach is moderate.
-#define WEAK_PRESENCE_BREACH 0x04           // Mask for when HPE breach is weak.
+#define OBSTACLE_THRESHOLD_BREACHED  0x0001     // Mask representing that the Obstacle Detection Threshold of an HCSR04 Sensor has been passed.
+#define PRESENCE_THRESHOLD_BREACHED  0x0002     // Mask representing that the Presence Detection Threshold of an HCSR04 Sensor has been passed.
+#define STRONG_PRESENCE_BREACH 0x10             // Mask for when HPE breach is strong.
+#define MODERATE_PRESENCE_BREACH 0x08           // Mask for when HPE breach is moderate.
+#define WEAK_PRESENCE_BREACH 0x04               // Mask for when HPE breach is weak.
+
+typedef uint32_t NotificationMask;  // Mask to delineate between Notifcations.
+#define UNSET ((NotificationMask) 0xFFFF)
+#define T_US_READY ((NotificationMask) 0x0001)  // Transducer ultrasonic sensor notification.
+#define L_US_READY ((NotificationMask) 0x0100)  // Left ultrasonic sensor notification.
+#define R_US_READY ((NotificationMask) 0x1000)  // Right ultrasonic sensor notification.
+
+// USS Identification.
+enum _sensor_id : uint8_t {
+    txTransducer,       // Transmitter US Transducer.
+    leftRxTransducer,   // Receiver Left US Transducer.
+    rightRxTransducer,  // Receiver Right US Transducer.
+    leftObsDet,         // Receiver Left HC-SR04 fro obstacle detection.
+    rightObsDet         // Receiver Right HC-SR04 for obstacle detection.
+};
+typedef enum _sensor_id SensorID;
 
 /**
  * Class representing the HC-SR04 Ultrasonic Sensors used as obstacle and presence detectors.
@@ -27,8 +43,18 @@ class HCSR04 {
         /**
          * Field that serves as an identifier for this HC-SR04.
          */
-        const int id;
+        const SensorID id;
         
+        /**
+         * Task that this HC-SR04 will be accessed from.
+         */
+        TaskHandle_t taskHandle = NULL;
+
+        /**
+         * Notification value for this sensor to be used with its calling task.
+         */
+        NotificationMask notif = UNSET;
+
         /**
          * Trigger pin of this HC-SR04.
          */
@@ -94,12 +120,14 @@ class HCSR04 {
          * @param echo The echo pin of this sensor.
          * @param id The unique Id for this ultrasonic sensor.
          * @param obstacleDetectionThreshold The distance from the sensor (in inches) that an obstacle must be to be "detected".
+         * @param notif Notification value to be used by this sensor from within its calling task.
          */
-        HCSR04(int trigger, int echo, int id, int obstacleDetectionThreshold) : 
+        HCSR04(int trigger, int echo, SensorID id, int obstacleDetectionThreshold, NotificationMask notif) : 
             trigger(trigger), 
             echo(echo), 
             id(id), 
-            obstacleDetectionThreshold(obstacleDetectionThreshold) {};
+            obstacleDetectionThreshold(obstacleDetectionThreshold),
+            notif(notif) {};
 
         /**
          * Initializes the sensor pin connections wrt the ESP32 and enables sensor.
@@ -187,6 +215,12 @@ class HCSR04 {
 
         int getTriggerPinNumber();
         int getEchoPinNumber();
+
+        bool isTransducer();
+        SensorID identify();
+        void attachTaskHandle(TaskHandle_t handle);
+        TaskHandle_t getTaskHandle();
+        NotificationMask getNotifValue();
 };
 
 // End include guard.

@@ -2,7 +2,9 @@
 #include "Device.h"
 
 // Define task handles.
-TaskHandle_t trigger_USS_task_handle = NULL;  
+TaskHandle_t trig_tx_transducer_task_handle = NULL;  
+TaskHandle_t trig_left_rx_transducer_task_handle = NULL;
+TaskHandle_t trig_right_rx_transducer_task_handle = NULL;
 TaskHandle_t poll_obs_detection_uss_handle = NULL;              
 
 /**
@@ -14,29 +16,77 @@ TaskHandle_t poll_obs_detection_uss_handle = NULL;
  * @param *pvPeripheralManager a pointer to the Sensor Manager instance running from which the sensors will be pulsed.
  * each sensor will be pulsed using the HCSR04 "pulseTrigger" function. 
  */
-void trigger_USS_task(void *pvPeripheralManager) {
+void trig_tx_transducer_task(void *pvPeripheralManager) {
     // Initialize task.
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
 
-    // Grab distance sensing transducer.
-    HCSR04 *transducer = manager->fetchUS(SensorID::transducer);
+    PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
+    HCSR04 *transducer = manager->fetchUS(SensorID::txTransducer);
     bool readingGood;
-    float adjDistance, adjAverage;
 
     // Begin task loop.
     for(;;) {
 
-        // Wait for notifcation before trigger.
+        // Wait for notifcation from tirgger timer before trigger.
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  
 
-        // Trigger.
+        // Trigger the transmitter.
         readingGood = transducer->readSensor(US_READ_TIME);
-        adjDistance = transducer->getDistanceReading() * 2 * 2.54;
-        adjAverage = transducer->getLastBufferAverage() * 2 * 2.54;
-        if(readingGood) Serial.printf("Distance: %f, Average: %f\n", adjDistance, adjAverage);
-        else log_e("Ultrasonic reading Unsuccesful."); 
-        //vTaskDelay(1000);
+
+        // Log triggers and errant succesful readings if they exist. 
+        // ReadingGood will always be false due to the mutilation of the sensor into tx only.
+        if(!readingGood) log_e("Tx triggered Succesfully.");
+        else log_e("Tx Trigger Issue.");
+    }
+}
+
+void trig_left_rx_transducer_task(void *pvPeripheralManager) {
+    // Initialize task.
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
+    HCSR04 *transducer = manager->fetchUS(SensorID::leftRxTransducer); 
+
+    bool readingGood;
+    float instDistance, avgDistance;
+
+    for(;;) {
+
+        // Wait for notifcation from tirgger timer before trigger.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  
+
+        readingGood = transducer->readSensor(US_READ_TIME);
+        if(readingGood) {
+            instDistance = transducer->getDistanceReading() * 2;
+            avgDistance = transducer->getLastBufferAverage() * 2;
+            Serial.printf("Left Rx: Distance: %f, Average: %f\n", instDistance, avgDistance);
+        }
+        else Serial.println("Left Rx Failed.");
+    }
+}
+
+void trig_right_rx_transducer_task(void *pvPeripheralManager) {
+    // Initialize task.
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
+    HCSR04 *transducer = manager->fetchUS(SensorID::rightRxTransducer); 
+
+    bool readingGood;
+    float instDistance, avgDistance;
+
+    for(;;) {
+
+        // Wait for notifcation from tirgger timer before trigger.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  
+
+        readingGood = transducer->readSensor(US_READ_TIME);
+        if(readingGood) {
+            instDistance = transducer->getDistanceReading() * 2;
+            avgDistance = transducer->getLastBufferAverage() * 2;
+            Serial.printf("Right Rx: Distance: %f, Average: %f\n", instDistance, avgDistance);
+        }
+        else Serial.println("Right Rx Failed.");
     }
 }
 
@@ -51,42 +101,37 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
 
 void on_transducer_us_echo_changed(void *arg) {
     ulong currTime = micros();
-    HCSR04 *singleTransducer = static_cast<HCSR04 *>(arg);
-    int pinState = digitalRead(singleTransducer->getEchoPinNumber());
-    if(pinState == HIGH) singleTransducer->setISRStartPulse(currTime);
+    HCSR04 *transducer = static_cast<HCSR04 *>(arg);
+    int pinState = digitalRead(transducer->getEchoPinNumber());
+    if(pinState == HIGH) transducer->setISRStartPulse(currTime);
     else {
-        singleTransducer->setIRSEndPulse(currTime);
-        BaseType_t higherPriorityWasAwoken = pdFALSE;
-        xTaskNotifyFromISR(trigger_USS_task_handle, T_US_READY, eSetBits, &higherPriorityWasAwoken);
-        portYIELD_FROM_ISR(higherPriorityWasAwoken);
+        transducer->setIRSEndPulse(currTime);
+        TaskHandle_t handle = transducer->getTaskHandle();
+        NotificationMask notifValue = transducer->getNotifValue();
+        if(handle != NULL && notifValue != UNSET) {
+            BaseType_t higherPriorityWasAwoken = pdFALSE;
+            xTaskNotifyFromISR(transducer->getTaskHandle(), transducer->getNotifValue(), eSetBits, &higherPriorityWasAwoken);
+            portYIELD_FROM_ISR(higherPriorityWasAwoken);
+        }
+        else {
+            if(handle == NULL) log_e("Transducer(%d): Null Task Handle.", transducer->identify());
+            if(notifValue == UNSET) log_e("Transducer(%d): Notif Value Unset.", transducer->identify());
+        }
     }
 }
 
-void on_left_us_echo_changed(void *arg) {
+void on_hcsr04_us_echo_changed(void *arg) {
     ulong currTime = micros();
-    HCSR04 *leftSensor = static_cast<HCSR04 *>(arg);
-    int pinState = digitalRead(leftSensor->getEchoPinNumber());
-    if(pinState == HIGH) leftSensor->setISRStartPulse(currTime);
+    HCSR04 *sensor = static_cast<HCSR04 *>(arg);
+    int pinState = digitalRead(sensor->getEchoPinNumber());
+    if(pinState == HIGH) sensor->setISRStartPulse(currTime);
     else {
-        leftSensor->setIRSEndPulse(currTime);
+        sensor->setIRSEndPulse(currTime);
         BaseType_t higherPriorityWasAwoken = pdFALSE;
-        xTaskNotifyFromISR(poll_obs_detection_uss_handle, L_US_READY, eSetBits, &higherPriorityWasAwoken);
+        xTaskNotifyFromISR(sensor->getTaskHandle(), sensor->getNotifValue(), eSetBits, &higherPriorityWasAwoken);
         portYIELD_FROM_ISR(higherPriorityWasAwoken);
     } 
 } 
-
-void on_right_us_echo_changed(void *arg) {
-    ulong currTime = micros();
-    HCSR04 *rightSensor = static_cast<HCSR04 *>(arg);
-    int pinState = digitalRead(rightSensor->getEchoPinNumber());
-    if(pinState == HIGH) rightSensor->setISRStartPulse(currTime);
-    else {
-        rightSensor->setIRSEndPulse(currTime);
-        BaseType_t higherPriorityWasAwoken = pdFALSE;
-        xTaskNotifyFromISR(poll_obs_detection_uss_handle, R_US_READY, eSetBits, &higherPriorityWasAwoken);
-        portYIELD_FROM_ISR(higherPriorityWasAwoken);
-    }
-}
 
 /**
  * Create Peripheral Manager.
@@ -128,104 +173,105 @@ void PeripheralManager::attachInterrupts() {
 void PeripheralManager::initUS() {
 
     // Initialize the ultrasonic sensors.
-    transducerUS->init();
-    if(!dev->isTransmitter()) {
-        leftUS->init();
-        rightUS->init();
+    if(dev->isTransmitter()) {
+        txTransducer->init();
+        txTransducer->attachTaskHandle(trig_tx_transducer_task_handle);
     }
-    log_e("Ultrasonic Initialized.");
+    else {
+        leftRxTransducer->init();
+        rightRxTransducer->init();
+        leftObsDetUS->init();
+        rightObsDetUS->init();
+
+        leftRxTransducer->attachTaskHandle(trig_left_rx_transducer_task_handle);
+        rightRxTransducer->attachTaskHandle(trig_right_rx_transducer_task_handle);
+        leftObsDetUS->attachTaskHandle(poll_obs_detection_uss_handle);
+        rightObsDetUS->attachTaskHandle(poll_obs_detection_uss_handle);
+    }
+    log_e("Ultrasonic Subsystem Initialized.");
 }
 
 void PeripheralManager::attachBeltInterrupts() {
+    int txEcho;
     switch (dev->getSocInUse()) {
         case SocConfig::ESP32_4MB :
-            attachInterruptArg(
-                (int) BeltPin::single_uss_echo, 
-                on_transducer_us_echo_changed, 
-                transducerUS, 
-                CHANGE
-            );
+            txEcho = (int) BeltPin::single_uss_echo;
             log_e("Succesfully Attached Belt Transducer Interrupt (ESP32).");
             break;
 
         case SocConfig::ESP32_S3_8MB :
-            attachInterruptArg(
-                (int) S3BeltPin::single_uss_echo, 
-                on_transducer_us_echo_changed, 
-                transducerUS, 
-                CHANGE
-            );
+            txEcho = (int) S3BeltPin::single_uss_echo;
             log_e("Succesfully Attached Belt Transducer Interrupt (ESP32-S3).");
-            break;
-        
-        case SocConfig::NONE :
-            Serial.println("Soc Config unset. Unable to attach interrupts. Amerliorate.");
             break;
 
         default:
-            Serial.println("Soc Config Fell through. No interrutps. Big Issue.");
+            log_e("Invalid Soc Config. No Valid interrutps.");
             break;
     }
+
+    attachInterruptArg(
+        txEcho, 
+        on_transducer_us_echo_changed,
+        txTransducer, 
+        CHANGE
+    );
 }
 
 void PeripheralManager::attachBotInterrupts() {
+    int leftObsEcho, rightObsEcho;
+    int leftTransducerEcho, rightTransducerEcho;
+    
     switch (dev->getSocInUse()) {
         case SocConfig::ESP32_4MB :
-            attachInterruptArg(
-                (int) BotPin::single_uss_echo, 
-                on_transducer_us_echo_changed, 
-                transducerUS, 
-                CHANGE
-            );
-
-            attachInterruptArg(
-                (int) BotPin::left_hcsr04_echo, 
-                on_left_us_echo_changed, 
-                leftUS, 
-                CHANGE
-            );
-
-            attachInterruptArg(
-                (int) BotPin::right_hcsr04_echo, 
-                on_right_us_echo_changed, 
-                rightUS, 
-                CHANGE
-            );
+            // Attach interrupts for echo pins on 2 rx transducers.
+            leftTransducerEcho = (int) BotPin::left_us_transducer_echo;
+            rightTransducerEcho = (int) BotPin::right_us_transducer_echo;
+            leftObsEcho = (int) BotPin::left_hcsr04_echo;
+            rightObsEcho = (int) BotPin::right_hcsr04_echo; 
             log_e("Succesfully Attached Bot Transducer Interrupt (ESP32).");
             break;
 
         case SocConfig::ESP32_S3_8MB :
-            attachInterruptArg(
-                (int) S3BotPin::single_uss_echo, 
-                on_transducer_us_echo_changed, 
-                transducerUS, 
-                CHANGE
-            );
-
-            attachInterruptArg(
-                (int) S3BotPin::left_hcsr04_echo, 
-                on_left_us_echo_changed, 
-                leftUS, 
-                CHANGE
-            );
-
-            attachInterruptArg(
-                (int) S3BotPin::right_hcsr04_echo, 
-                on_right_us_echo_changed, 
-                rightUS, 
-                CHANGE
-            );
+            leftTransducerEcho = (int) S3BotPin::left_us_transducer_echo;
+            rightTransducerEcho = (int) S3BotPin::right_us_transducer_echo;
+            leftObsEcho = (int) S3BotPin::left_hcsr04_echo;
+            rightObsEcho = (int) S3BotPin::right_hcsr04_echo;
             log_e("Succesfully Attached Bot Transducer Interrupt (ESP32-S3).");
-            break;
-        
-        case SocConfig::NONE :
-            Serial.println("Soc Config unset. Unable to attach interrupts. Amerliorate.");
             break;
 
         default:
-            Serial.println("Soc Config Fell through. No interrutps. Big Issue.");
+            log_e("Invalid Soc Config. No Valid interrutps.");
             break;
     }
+
+    attachInterruptArg(
+        leftTransducerEcho, 
+        on_transducer_us_echo_changed, 
+        this->leftRxTransducer, 
+        CHANGE
+    );
+
+    attachInterruptArg(
+        rightTransducerEcho, 
+        on_transducer_us_echo_changed, 
+        this->rightRxTransducer, 
+        CHANGE
+    );
+
+    // Attach interrupts fro echo pins on 2 obstacle detection HC-SR04s.
+    attachInterruptArg(
+        leftObsEcho, 
+        on_hcsr04_us_echo_changed, 
+        this->leftObsDetUS, 
+        CHANGE
+    );
+
+    attachInterruptArg(
+        rightObsEcho, 
+        on_hcsr04_us_echo_changed, 
+        this->rightObsDetUS, 
+        CHANGE
+    );
 }
 
 // Per name.
@@ -234,45 +280,116 @@ void PeripheralManager::beginTasks() {
     // Create and begin all sensor based tasks.
     BaseType_t taskCreated;
 
-    taskCreated = beginTriggerDistanceUssTask();
-    if(taskCreated != pdPASS) log_e("Transducer trigger task not created. Fail Code: %d\n", taskCreated);
-    else log_e("Transducer trigger task created.");
+    taskCreated = beginTransducerTriggerTasks();
+    if(taskCreated != pdPASS) log_e("Transducer trigger tasks not created. Fail Code: %d\n", taskCreated);
+    else log_e("Transducer trigger tasks created.");
 
-    taskCreated = beginPollObstacleDetectionUssTask();
-    if(taskCreated != pdPASS) log_e("Read Ultrasonic Sensor task not created. Fail Code: %d\n", taskCreated);
-    else log_e("Read Ultrasonic Sensor task created.");
+    if(this->dev->isTransmitter() == false) {
+        taskCreated = beginPollObstacleDetectionUssTask();
+        if(taskCreated != pdPASS) log_e("Read Ultrasonic Sensor task not created. Fail Code: %d\n", taskCreated);
+        else log_e("Read Ultrasonic Sensor task created.");
+    }
     
 }
+
+bool PeripheralManager::isTransmitter() { return dev->isTransmitter(); }
 
 HCSR04* PeripheralManager::fetchUS(SensorID id) {
     HCSR04 *res = NULL;
     switch (id) {
-        case (SensorID::transducer) : 
-            res = transducerUS;
+        case (SensorID::txTransducer):
+            res = this->txTransducer;
             break;
-        case (SensorID::left) : 
-            res = leftUS;
+
+        case (SensorID::leftRxTransducer):
+            res = this->leftRxTransducer;
             break;
-        case (SensorID::right) : 
-            res = rightUS;
+
+        case (SensorID::rightRxTransducer):
+            res = this->rightRxTransducer;
             break;
+
+        case (SensorID::leftObsDet) : 
+            res = this->leftObsDetUS;
+            break;
+
+        case (SensorID::rightObsDet) : 
+            res = this->rightObsDetUS;
+            break;
+
     }
     return res;
 }
 
 // Create the task trigger the distance sensing ultrasonic transducer.
-BaseType_t PeripheralManager::beginTriggerDistanceUssTask() {
+BaseType_t PeripheralManager::beginTriggerTxTransducerTask() {
     BaseType_t res;
     res = xTaskCreatePinnedToCore(
-        &trigger_USS_task,              // Pointer to task function.
-        "trigger_transducer_Task",             // Task name.
-        TaskStackDepth::tsd_POLL,       // Size of stack allocated to the task (in bytes).
-        this,                           // Pointer to parameters used for task creation.
-        TaskPriorityLevel::tpl_HIGH,    // Task priority level.
-        &trigger_USS_task_handle,       // Pointer to task handle.
-        1                               // Core that the task will run on.
+        &trig_tx_transducer_task,               // Pointer to task function.
+        "trigger_tx_transducer_Task",           // Task name.
+        TaskStackDepth::tsd_TRIG,               // Size of stack allocated to the task (in bytes).
+        this,                                   // Pointer to parameters used for task creation.
+        TaskPriorityLevel::tpl_HIGH,            // Task priority level.
+        &trig_tx_transducer_task_handle,        // Pointer to task handle.
+        1                                       // Core that the task will run on.
     );
     return res;
+}
+
+// Create the task trigger the distance sensing ultrasonic transducer.
+BaseType_t PeripheralManager::beginTriggerLeftRxTransducerTask() {
+    BaseType_t res;
+    res = xTaskCreatePinnedToCore(
+        &trig_left_rx_transducer_task,          // Pointer to task function.
+        "trigger_left_rx_transducer_Task",      // Task name.
+        TaskStackDepth::tsd_TRIG,               // Size of stack allocated to the task (in bytes).
+        this,                                   // Pointer to parameters used for task creation.
+        TaskPriorityLevel::tpl_HIGH,            // Task priority level.
+        &trig_left_rx_transducer_task_handle,   // Pointer to task handle.
+        1                                       // Core that the task will run on.
+    );
+    return res;
+}
+
+// Create the task trigger the distance sensing ultrasonic transducer.
+BaseType_t PeripheralManager::beginTriggerRightRxTransducerTask() {
+    BaseType_t res;
+    res = xTaskCreatePinnedToCore(
+        &trig_right_rx_transducer_task,         // Pointer to task function.
+        "trigger_right_rx_transducer_task",     // Task name.
+        TaskStackDepth::tsd_TRIG,               // Size of stack allocated to the task (in bytes).
+        this,                                   // Pointer to parameters used for task creation.
+        TaskPriorityLevel::tpl_HIGH,            // Task priority level.
+        &trig_right_rx_transducer_task_handle,  // Pointer to task handle.
+        1                                       // Core that the task will run on.
+    );
+    return res;
+}
+
+BaseType_t PeripheralManager::beginTransducerTriggerTasks() {
+    BaseType_t res, res2;
+    if(this->isTransmitter()) {
+        res = beginTriggerTxTransducerTask();
+        if(res != pdPASS) log_e("Tx Trigger Task not created.");
+        return res;
+    }
+    else {
+        if(TESTING_LEFT_RX_ONLY == true) {
+            res = beginTriggerLeftRxTransducerTask();
+            if(res != pdPASS) log_e("Left Rx Trigger Task not created.");
+            return res;
+        }
+        if(TESTING_RIGHT_RX_ONLY == true) {
+            res = beginTriggerRightRxTransducerTask();
+            if(res != pdPASS) log_e("Right Rx Trigger Task not created.");
+            return res;
+        }
+        res = beginTriggerLeftRxTransducerTask();
+        res2 = beginTriggerRightRxTransducerTask();
+        if(res != pdPASS) log_e("Left Rx Trigger Task not created.");
+        if(res2 != pdPASS) log_e("Right Rx Trigger Task not created.");
+        return res && res2;
+    }
 }
 
 // Create the task to poll the 2 obstacle detection ultrasonic sensors.
@@ -291,105 +408,120 @@ BaseType_t PeripheralManager::beginPollObstacleDetectionUssTask() {
 }
 
 void PeripheralManager::constructBeltPeripherals() {
+    // Identify the trigger and echo pins based on configuration.
+    int trig, echo;
     switch (dev->getSocInUse()) {
         case SocConfig::ESP32_4MB :
-            transducerUS = new HCSR04(
-                (int) BeltPin::single_uss_trig, 
-                (int) BeltPin::single_uss_echo, 
-                SensorID::transducer, 
-                OBS_LIM
-            );
+            trig = (int) BeltPin::single_uss_trig;
+            echo = (int) BeltPin::single_uss_echo;
             break;
 
         case SocConfig::ESP32_S3_8MB :
-            transducerUS = new HCSR04(
-                (int) S3BeltPin::single_uss_trig, 
-                (int) S3BeltPin::single_uss_echo, 
-                SensorID::transducer, 
-                OBS_LIM
-            );
-            break;
-        
-        case SocConfig::NONE :
-            Serial.println("Soc Config unset. Amerliorate.");
+            trig = (int) S3BeltPin::single_uss_trig;
+            echo = (int) S3BeltPin::single_uss_echo;
             break;
 
         default:
-            Serial.println("Soc Config Fell through. Big Issue.");
+            trig = -1;
+            echo = -1;
+            log_e("Invalid Soc Config. Bad Belt Construction.");
             break;
     }
+
+    // Construct the belt peripheral.
+    this->txTransducer = new HCSR04(
+        trig, 
+        echo, 
+        SensorID::txTransducer, 
+        OBS_LIM,
+        T_US_READY
+    );
 }
 
 void PeripheralManager::constructBotPeripherals() {
+    int leftObsTrig, rightObsTrig, leftTransducerTrig, rightTransducerTrig;
+    int leftObsEcho, rightObsEcho, leftTransducerEcho, rightTransducerEcho;
+    int leftMotLeftPWM, leftMotRightPWM, rightMotLeftPWM, rightMotRightPWM;
+
     switch (dev->getSocInUse()) {
         case SocConfig::ESP32_4MB :
-            transducerUS = new HCSR04(
-                (int) BotPin::single_uss_trig, 
-                (int) BotPin::single_uss_echo, 
-                SensorID::transducer, 
-                OBS_LIM
-            );
+            leftTransducerTrig = (int) BotPin::left_us_transducer_trig;
+            leftTransducerEcho= (int) BotPin::left_us_transducer_echo;
+            rightTransducerTrig = (int) BotPin::right_us_transducer_trig;
+            rightTransducerEcho= (int) BotPin::right_us_transducer_echo;
 
-            leftUS = new HCSR04(
-                (int) BotPin::left_hcsr04_trig, 
-                (int) BotPin::left_hcsr04_echo,
-                SensorID::left, 
-                OBS_LIM 
-            );
+            leftObsTrig = (int) BotPin::left_hcsr04_trig;
+            leftObsEcho = (int) BotPin::left_hcsr04_echo;
+            rightObsTrig = (int) BotPin::right_hcsr04_trig;
+            rightObsEcho = (int) BotPin::right_hcsr04_echo;
 
-            rightUS = new HCSR04(
-                (int) BotPin::right_hcsr04_trig, 
-                (int) BotPin::right_hcsr04_echo, 
-                SensorID::right, 
-                OBS_LIM 
-            );
-
-            driveSystem = new BTS7960(
-                (int) BotPin::left_mot_left_pwm,
-                (int) BotPin::left_mot_right_pwm,
-                (int) BotPin::right_mot_left_pwm,
-                (int) BotPin::right_mot_right_pwm
-            );
+            leftMotLeftPWM = (int) BotPin::left_mot_left_pwm;
+            leftMotRightPWM = (int) BotPin::left_mot_right_pwm;
+            rightMotLeftPWM = (int) BotPin::right_mot_left_pwm;
+            rightMotRightPWM = (int) BotPin::right_mot_right_pwm;
             break;
 
         case SocConfig::ESP32_S3_8MB :
-            transducerUS = new HCSR04(
-                (int) S3BotPin::single_uss_trig, 
-                (int) S3BotPin::single_uss_echo, 
-                SensorID::transducer, 
-                OBS_LIM
-            );
+            leftTransducerTrig = (int) S3BotPin::left_us_transducer_trig;
+            leftTransducerEcho= (int) S3BotPin::left_us_transducer_echo;
+            rightTransducerTrig = (int) S3BotPin::right_us_transducer_trig;
+            rightTransducerEcho= (int) S3BotPin::right_us_transducer_echo;
 
-            leftUS = new HCSR04(
-                (int) S3BotPin::left_hcsr04_trig, 
-                (int) S3BotPin::left_hcsr04_echo,
-                SensorID::left, 
-                OBS_LIM 
-            );
+            leftObsTrig = (int) S3BotPin::left_hcsr04_trig;
+            leftObsEcho = (int) S3BotPin::left_hcsr04_echo;
+            rightObsTrig = (int) S3BotPin::right_hcsr04_trig;
+            rightObsEcho = (int) S3BotPin::right_hcsr04_echo;
 
-            rightUS = new HCSR04(
-                (int) S3BotPin::right_hcsr04_trig, 
-                (int) S3BotPin::right_hcsr04_echo, 
-                SensorID::right, 
-                OBS_LIM 
-            );
-
-            driveSystem = new BTS7960(
-                (int) S3BotPin::left_mot_left_pwm,
-                (int) S3BotPin::left_mot_right_pwm,
-                (int) S3BotPin::right_mot_left_pwm,
-                (int) S3BotPin::right_mot_right_pwm
-            );
-            break;
-        
-        case SocConfig::NONE :
-            Serial.println("Soc Config unset. Amerliorate.");
+            leftMotLeftPWM = (int) S3BotPin::left_mot_left_pwm;
+            leftMotRightPWM = (int) S3BotPin::left_mot_right_pwm;
+            rightMotLeftPWM = (int) S3BotPin::right_mot_left_pwm;
+            rightMotRightPWM = (int) S3BotPin::right_mot_right_pwm;
             break;
 
         default:
-            Serial.println("Soc Config Fell through. Big Issue.");
+            Serial.println("Invalid Soc Config. Bad Bot Construction.");
             break;
     }
+
+    // Construct Bot peripherals.
+    this->leftRxTransducer = new HCSR04(
+        leftTransducerTrig,
+        leftTransducerEcho,
+        SensorID::leftRxTransducer,
+        OBS_LIM,
+        T_US_READY
+    );
+
+    this->rightRxTransducer = new HCSR04(
+        rightTransducerTrig,
+        rightTransducerEcho,
+        SensorID::rightRxTransducer,
+        OBS_LIM,
+        T_US_READY
+    );
+
+    this->rightObsDetUS = new HCSR04(
+        rightObsTrig,
+        rightObsEcho,
+        SensorID::rightObsDet,
+        OBS_LIM,
+        R_US_READY
+    );
+
+    this->leftObsDetUS = new HCSR04(
+        leftObsTrig,
+        leftObsEcho,
+        SensorID::leftObsDet,
+        OBS_LIM,
+        L_US_READY
+    );
+
+    driveSystem = new BTS7960(
+        leftMotLeftPWM,
+        leftMotRightPWM,
+        rightMotLeftPWM,
+        rightMotRightPWM
+    );
 }
 
 void PeripheralManager::initDriveSystem() {

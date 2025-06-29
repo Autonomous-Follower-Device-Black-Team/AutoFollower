@@ -3,6 +3,9 @@
 
 #include <Arduino.h>
 
+#define TESTING_LEFT_RX_ONLY 0
+#define TESTING_RIGHT_RX_ONLY 0
+
 #define BAUD_RATE 115200
 
 typedef uint32_t milliSeconds;
@@ -23,16 +26,22 @@ typedef _soc_config SocConfig;
  * Bot (Receiver) Pin defintions - ESP32-S3 Config.
  */
 enum class _bot_pins_s3 : uint8_t {
-    single_uss_trig = 4,
-    single_uss_echo = 5,
-    left_hcsr04_trig = 6,
-    left_hcsr04_echo = 7,
-    right_hcsr04_trig = 15,
-    right_hcsr04_echo = 16,
-    left_mot_left_pwm = 17,
-    left_mot_right_pwm = 18,
-    right_mot_left_pwm = 40,
-    right_mot_right_pwm = 41
+    left_us_transducer_trig = 7,
+    left_us_transducer_echo = 5,
+    right_us_transducer_trig = 6,
+    right_us_transducer_echo = 4,
+
+    left_hcsr04_trig = 15,
+    left_hcsr04_echo = 16,
+    right_hcsr04_trig = 17,
+    right_hcsr04_echo = 18,
+
+    left_mot_left_pwm = 9,
+    left_mot_right_pwm = 10,
+    right_mot_left_pwm = 11,
+    right_mot_right_pwm = 12,
+
+    rgbLed = 38
 };
 typedef _bot_pins_s3 S3BotPin;
 
@@ -40,17 +49,20 @@ typedef _bot_pins_s3 S3BotPin;
  * Bot (Receiver) Pin defintions - ESP32 Config.
  */
 enum class _bot_pins : uint8_t {
-    single_uss_trig = 36,
-    single_uss_echo = 39,
+    left_us_transducer_trig = 36,
+    left_us_transducer_echo = 39,
+    right_us_transducer_trig = 27,
+    right_us_transducer_echo = 14,
+
     left_hcsr04_trig = 34,
     left_hcsr04_echo = 35,
     right_hcsr04_trig = 32,
     right_hcsr04_echo = 33,
+
     left_mot_left_pwm = 25,
     left_mot_right_pwm = 26,
     right_mot_left_pwm = 17,
-    right_mot_right_pwm = 16,
-    rgbLed = 38
+    right_mot_right_pwm = 16
 };
 typedef _bot_pins BotPin;
 
@@ -77,6 +89,7 @@ typedef _belt_pins BeltPin;
 // Size of the stack allocated on the heap to a task (in bytes).
 enum TaskStackDepth {
     tsd_MAX = 16384,        // Maximum size given to a task.
+    tsd_TRIG = 4096,
     tsd_POLL = 6000,        // Size given to tasks who read sensors.
     tsd_SET = 5000,         // Size given to tasks who simply set values.
     tsd_TRANSMIT = 6000,    // Size given to tasks who transmit information to firebase.

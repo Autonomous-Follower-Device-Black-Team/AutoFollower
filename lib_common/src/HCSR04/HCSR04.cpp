@@ -15,9 +15,16 @@ void HCSR04::init() {
  */
 bool HCSR04::readSensor(TickType_t xMaxBlockTime) {
     
-    // Ensure sensor is active before reading.
+    // Ensure sensor is active and task is set before reading.
     bool res = false;
-    if(!active) return res;
+    if(!active) {
+        log_e("Invalid Read. Sensor(%d) inactive.", id);
+        return res;
+    }
+    if(taskHandle == NULL) {
+        log_e("Read Issue w/ ID: %d. Task Handle Not Set.", this->id);
+        return res;
+    }
 
     // Pulse trigger for 10 us.
     pulseTrigger();
@@ -184,3 +191,9 @@ float HCSR04::getLastBufferAverage() { return lastBufferAverage; }
 
 int HCSR04::getTriggerPinNumber() { return trigger; }
 int HCSR04::getEchoPinNumber() { return echo; }
+
+bool HCSR04::isTransducer() { return (id != SensorID::leftObsDet) && (id != SensorID::rightObsDet); }
+SensorID HCSR04::identify() { return id; }
+void HCSR04::attachTaskHandle(TaskHandle_t handle) { this->taskHandle = handle; }
+TaskHandle_t HCSR04::getTaskHandle() { return this->taskHandle; }
+NotificationMask HCSR04::getNotifValue() { return this->notif; }

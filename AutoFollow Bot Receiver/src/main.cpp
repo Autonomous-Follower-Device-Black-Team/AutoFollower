@@ -17,16 +17,19 @@ void setup() {
         delay(500);
     }
 
-    bot.createOneshotEspTimer(TTR_US - 2);
-    bot.startPeripheralManager();
-    //bot.beginPingTimerTask();
+    bot.createOneshotEspTimer(TTR_US);
+    bot.startPeripheralManager();   
     bot.startESPNow();
 
     log_e("Bot Setup Complete.");
 }
 
+bool listPrinted = false;
 void loop() {
-    //vTaskList(info);
-    //Serial.println(info);
+    if(!listPrinted) {
+        vTaskList(info);
+        Serial.println(info);
+        listPrinted = true;
+    }
     vTaskDelay(1000);
 }

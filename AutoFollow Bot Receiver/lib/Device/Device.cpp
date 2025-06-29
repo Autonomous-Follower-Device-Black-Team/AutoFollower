@@ -7,8 +7,17 @@ void trigger_timer_callback(void *arg) {
     Device *dev = static_cast<Device *>(arg);
     dev->setTriggerTimerFlag(true);
     dev->timer_on = false;
-    //xTaskNotify(ping_timer_task_handle, -1, eNoAction);
-    xTaskNotify(trigger_USS_task_handle, -1, eNoAction);
+    if(dev->isTransmitter()) {
+        if(trig_tx_transducer_task_handle != NULL) xTaskNotify(trig_tx_transducer_task_handle, -1, eNoAction);
+        else log_e("Notify Tx Trigger Failed. Null Task Handle.");
+    }
+    else {
+        if(trig_left_rx_transducer_task_handle != NULL) xTaskNotify(trig_left_rx_transducer_task_handle, -1, eNoAction);
+        else if(!TESTING_LEFT_RX_ONLY) log_e("Notify Left Rx Trigger Failed. Null Task Handle.");
+
+        if(trig_right_rx_transducer_task_handle != NULL) xTaskNotify(trig_right_rx_transducer_task_handle, -1, eNoAction);
+        else if(!TESTING_RIGHT_RX_ONLY) log_e("Notify Right Rx Trigger Failed. Null Task Handle.");
+    }
 }
 
 void ping_timer_task(void *pvParams) {
@@ -66,9 +75,9 @@ void Device::init() {
 }
 
 void Device::startPeripheralManager()  {
+    manager->beginTasks();
     manager->initPeripherals();
     manager->attachInterrupts();
-    manager->beginTasks();
 }
 
 void Device::startESPNow() {

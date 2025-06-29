@@ -17,17 +17,20 @@ void setup() {
         delay(500);
     }
 
-    belt.createOneshotEspTimer(TTR_US - 2);
+    belt.createOneshotEspTimer(TTR_US);
     belt.startPeripheralManager();
-    //belt.beginPingTimerTask();
     belt.startESPNow();
 
     log_e("Belt Setup Complete.");
 }
 
+bool listShown = true;
 void loop() {
-    //vTaskList(info);
-    //Serial.println(info);
+    if(listShown) {
+        vTaskList(info);
+        Serial.println(info); 
+        listShown = false;
+    }
     vTaskDelay(1000);
 }
 
