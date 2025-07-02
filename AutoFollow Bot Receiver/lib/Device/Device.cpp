@@ -71,7 +71,6 @@ BaseType_t Device::processDataSent(const char* data) {
 void Device::init() {
     startPeripheralManager();
     startESPNow();
-    startDriveSystem();
 }
 
 void Device::startPeripheralManager()  {
@@ -88,9 +87,6 @@ void Device::startESPNow() {
     tx->start();
 }
 
-void Device::startDriveSystem() {
-
-}
 
 void Device::createOneshotEspTimer(uint64_t delay) {
     triggerTimerDelay = delay;

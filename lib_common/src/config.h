@@ -6,9 +6,28 @@
 #define TESTING_LEFT_RX_ONLY 0
 #define TESTING_RIGHT_RX_ONLY 0
 
+#define RX_DRIVE_SYSTEM_ON 0
+#define RX_ULTRASONIC_SYSTEM_ON 1
+#define TX_ULTRASONIC_SYSTEM_ON 1
+#define L_RX_DEBUG 0
+#define R_RX_DEBUG 0
+
 #define BAUD_RATE 115200
 
+typedef uint32_t NotificationMask;  // Mask to delineate between Notifcations.
 typedef uint32_t milliSeconds;
+
+#define UNSET ((NotificationMask) 0xFFFF)
+#define T_US_READY ((NotificationMask) 0x0001)  // Transducer ultrasonic sensor notification.
+#define L_US_READY ((NotificationMask) 0x0002)  // Left ultrasonic sensor notification.
+#define R_US_READY ((NotificationMask) 0x0003)  // Right ultrasonic sensor notification.
+#define L_TD_READY ((NotificationMask) 0x0004)  // Left Transducer notification.
+#define R_TD_READY ((NotificationMask) 0x0005)  // Right Transducer notification.
+#define MOT_E_STOP ((NotificationMask) 0x0005)  // Emergency stop notification.
+#define MOT_RESUME ((NotificationMask) 0x0006)  // Resume movemment notification.
+
+#define TD_READY (L_TD_READY | R_TD_READY)  // Both Rx transducers ready to be used.
+
 #define TTR_US 40  // Time-to-read a single ultrasonic sensor (in milliseconds).
 #define US_READ_TIME ((milliSeconds) pdMS_TO_TICKS(TTR_US))     // The maximum time it takes to read an ultrasonic sensor (in ticks).
 

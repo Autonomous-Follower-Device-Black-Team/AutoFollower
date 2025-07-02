@@ -5,6 +5,8 @@
 // Grab libraries. 
 #include <Arduino.h>
 #include <Preferences.h>
+#include "config.h"
+
 
 #define HPE_PERCENT_DIFF 2      // Meaningful percent difference between current buffer average and HPE Threshold (in %).
 #define HPE_WEAK_PERCENT 5      // Percent difference between current and last buffer averages weakly indicating presence (in %).
@@ -17,12 +19,6 @@
 #define STRONG_PRESENCE_BREACH 0x10             // Mask for when HPE breach is strong.
 #define MODERATE_PRESENCE_BREACH 0x08           // Mask for when HPE breach is moderate.
 #define WEAK_PRESENCE_BREACH 0x04               // Mask for when HPE breach is weak.
-
-typedef uint32_t NotificationMask;  // Mask to delineate between Notifcations.
-#define UNSET ((NotificationMask) 0xFFFF)
-#define T_US_READY ((NotificationMask) 0x0001)  // Transducer ultrasonic sensor notification.
-#define L_US_READY ((NotificationMask) 0x0100)  // Left ultrasonic sensor notification.
-#define R_US_READY ((NotificationMask) 0x1000)  // Right ultrasonic sensor notification.
 
 // USS Identification.
 enum _sensor_id : uint8_t {
@@ -203,7 +199,7 @@ class HCSR04 {
          * Sets the end time of the echo pulse once it begins.
          * @param end This is the end time of the echo pulse once this sensor has begun measuring.
          */
-        void setIRSEndPulse(ulong end);
+        void setISREndPulse(ulong end);
 
         /**
          * Get the last distance reading.
@@ -221,6 +217,8 @@ class HCSR04 {
         void attachTaskHandle(TaskHandle_t handle);
         TaskHandle_t getTaskHandle();
         NotificationMask getNotifValue();
+        ulong getISRStartPulse();
+        ulong getISREndPulse();
 };
 
 // End include guard.

@@ -7,8 +7,8 @@ TaskHandle_t esp_now_process_data_handle = NULL;
 void esp_now_tx_rx_task(void *pvParams) {
     // Setup.
     EspNowNode *node = static_cast<EspNowNode *>(pvParams);
-    bool txGood, txTimeout, tryToTx, printRxMsg;
-    ulong lastTimeSent = 0;
+    bool txGood, txTimeout, tryToTx, printRxMsg, rxTimeout;
+    bool txTimeoutCallback = false, rxTimeoutCallback = false;
     
     // Task loop.
     for(;;) {
@@ -19,16 +19,16 @@ void esp_now_tx_rx_task(void *pvParams) {
         }
 
         // Ready to transmit.
-        txTimeout = (millis() - lastTimeSent) > ACK_TIMEOUT_MS;
+        txTimeout = (millis() - node->getLastTxTime()) > ACK_TIMEOUT_MS;
         tryToTx = (node->readyToTransmit() == true && !node->isTransmissionPaused()) || (txTimeout);
         if(tryToTx) {
 
-            //node->reRegister();
+            // Add a small delay before transmitting.
+            if(node->isNodeTransmitter() == true) vTaskDelay(pdMS_TO_TICKS(TX_DELAY_MS));
+
+            // Transmit.
             txGood = node->transmit();
-            if(txGood) {
-                lastTimeSent = millis();
-                printRxMsg = true;
-            }
+            if(txGood) printRxMsg = true;
             else {
                 Serial.println("Failed Transmission");
                 node->reRegister();
@@ -37,6 +37,8 @@ void esp_now_tx_rx_task(void *pvParams) {
         
         // Ready to receive.
         else {
+
+            rxTimeout = (millis() - node->getLastRxTime()) > ACK_TIMEOUT_MS;
             if(printRxMsg && false) {
                 if(node->isNodeTransmitter()) Serial.println("Waiting for Acknowledgment From Receiver (Bot)");
                 else Serial.println("Waiting for acknowledgement from Transmitter (Belt)");
@@ -229,6 +231,9 @@ bool EspNowNode::isTransmissionPaused() { return isPaused; }
 
 void EspNowNode::onReceive(const uint8_t *data, size_t len, bool broadcast) {
 
+    // Time stamp.
+    this->setLastRxTime(millis());
+
     // Save data received.
     ESP_NOW_PACKET *dataReceived = (ESP_NOW_PACKET *) data;
     incomingData.header = dataReceived->header;
@@ -240,6 +245,10 @@ void EspNowNode::onReceive(const uint8_t *data, size_t len, bool broadcast) {
 }
 
 void EspNowNode::onSent(bool success) {
+    // Time stamp.
+    this->setLastTxTime(millis());
+
+    // Set node to wait if necessary.
     if(ackRequired) this->waitingForData = true;
     dataSentCallBack("");
 }
@@ -306,7 +315,7 @@ bool EspNowNode::proccessPacket() {
             else Serial.println("Unable to process wave. Wave Processing Callback Not Assigned.");
             break;
             
-        // Process Acknow
+        // Process Ping.
         case Header::TRIGGER_PING:
             if(infoReceivedCallback != NULL) infoReceivedCallback(dataToProcess);
             else Serial.println("Unable to process ping. InfoReceived Processing Callback Not Assigned.");
@@ -436,3 +445,8 @@ String EspNowNode::getPeerMacAddress() {
 String EspNowNode::getThisMacAddress() {
     return String(WiFi.macAddress());
 }
+
+ulong EspNowNode::getLastTxTime() { return this->lastTxTime; }
+ulong EspNowNode::getLastRxTime() { return this->lastRxTime; }
+void EspNowNode::setLastTxTime(ulong time) { this->lastTxTime = time; }
+void EspNowNode::setLastRxTime(ulong time) { this->lastRxTime = time; }

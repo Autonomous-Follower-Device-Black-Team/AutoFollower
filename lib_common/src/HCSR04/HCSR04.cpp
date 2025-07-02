@@ -43,6 +43,10 @@ bool HCSR04::readSensor(TickType_t xMaxBlockTime) {
         pastDistances[distIndex++] = inches;
         res = true;
     }
+    else {
+        setISRStartPulse(0);
+        setISREndPulse(0);
+    }
 
     // Return.
     return res;
@@ -175,7 +179,7 @@ void HCSR04::setISRStartPulse(ulong start) {
     isrPulseStart = start;
 }
 
-void HCSR04::setIRSEndPulse(ulong end) {
+void HCSR04::setISREndPulse(ulong end) {
     isrPulseEnd = end;
 }
 
@@ -197,3 +201,5 @@ SensorID HCSR04::identify() { return id; }
 void HCSR04::attachTaskHandle(TaskHandle_t handle) { this->taskHandle = handle; }
 TaskHandle_t HCSR04::getTaskHandle() { return this->taskHandle; }
 NotificationMask HCSR04::getNotifValue() { return this->notif; }
+ulong HCSR04::getISRStartPulse() {return this->isrPulseStart; }
+ulong HCSR04::getISREndPulse() { return this->isrPulseEnd; }

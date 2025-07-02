@@ -12,11 +12,13 @@
 #define LED_C_LOW 0
 #define LED_C_HIGH 255
 
+#define BASE_SPEED 200
+#define ROTATING_SPEED 150
+
 enum stopType {
     COAST, 
     BRAKE
 };
-
 
 class Motor {
     

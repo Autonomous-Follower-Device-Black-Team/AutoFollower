@@ -8,7 +8,8 @@
 #include <esp_wifi.h>
 
 #define TaskDelayLength pdMS_TO_TICKS(100)
-#define ACK_TIMEOUT_MS 10000     // Transmission timeout length (ms).
+#define ACK_TIMEOUT_MS 5000     // Transmission timeout length (ms).
+#define TX_DELAY_MS 60          // Extra delay for the transmitter. Used to pace Transmission frequency. 
 
 typedef BaseType_t (* ProcessDataCallback)(const char *);
 
@@ -75,6 +76,9 @@ class EspNowNode : ESP_NOW_Peer {
         uint8_t peerMacAddress[6];                  // Address of this nodes peer.
         inline static ESP_NOW_PACKET outgoingData;  // Storage for the data to be transmitted from this node.
         inline static ESP_NOW_PACKET incomingData;  // storage for the data received by this node.
+
+        ulong lastTxTime = 0;
+        ulong lastRxTime = 0;
 
         /**
          * Intializes Wi-Fi on the ESP, specifically begins
@@ -199,6 +203,11 @@ class EspNowNode : ESP_NOW_Peer {
         // Methods for identifying info on nodes in the network.
         String getThisMacAddress();
         String getPeerMacAddress();
+
+        ulong getLastTxTime();
+        ulong getLastRxTime();
+        void setLastTxTime(ulong time);
+        void setLastRxTime(ulong time);
     };
 
 

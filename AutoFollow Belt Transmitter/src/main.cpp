@@ -10,9 +10,8 @@ char info[1000];
 
 void setup() {
     Serial.begin(BAUD_RATE);  
-    delay(1000);
     log_e("Entering Belt Setup.");
-    for(int i = 0; i < 5; i++) {
+    for(int i = 0; i < 10; i++) {
         Serial.println(".");
         delay(500);
     }
