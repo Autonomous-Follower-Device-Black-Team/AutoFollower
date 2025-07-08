@@ -58,7 +58,7 @@ class Device {
         void init();
                 
         void startPeripheralManager();
-        void startESPNow();
+        void startESPNow(bool wiFiOn = false);
 
         void setTriggerTimerFlag(bool val) { trigger_timer_flag = true; }
         bool getTriggerTimerFlag() { return trigger_timer_flag; }

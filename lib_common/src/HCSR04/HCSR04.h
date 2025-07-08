@@ -7,6 +7,8 @@
 #include <Preferences.h>
 #include "config.h"
 
+#define TTR_US 40           // Time-to-read a single ultrasonic sensor (in milliseconds).
+#define US_READ_TIME ((milliSeconds) pdMS_TO_TICKS(TTR_US))                         // The maximum time it takes to read an ultrasonic sensor (in ticks).
 
 #define HPE_PERCENT_DIFF 2      // Meaningful percent difference between current buffer average and HPE Threshold (in %).
 #define HPE_WEAK_PERCENT 5      // Percent difference between current and last buffer averages weakly indicating presence (in %).
@@ -30,6 +32,8 @@ enum _sensor_id : uint8_t {
 };
 typedef enum _sensor_id SensorID;
 
+void IRAM_ATTR on_echo_changed(void *arg);            // ISR that deals with timing of left ultrasonic sensor's trigger pulse. Arg is a ref to sensor in question.
+
 /**
  * Class representing the HC-SR04 Ultrasonic Sensors used as obstacle and presence detectors.
  */
@@ -42,14 +46,19 @@ class HCSR04 {
         const SensorID id;
         
         /**
-         * Task that this HC-SR04 will be accessed from.
+         * Pointer to task handle that this HC-SR04 will be accessed from.
          */
-        TaskHandle_t taskHandle = NULL;
+        TaskHandle_t *taskHandlePtr = NULL;
 
         /**
-         * Notification value for this sensor to be used with its calling task.
+         * Notification value for this sensor to be used with its calling task to indicate valid data received.
          */
-        NotificationMask notif = UNSET;
+        NotificationMask notifValid = UNSET;
+
+         /**
+         * Notification value for this sensor to be used with its calling task to indicate invalid data received.
+         */
+        NotificationMask notifInvalid = UNSET;
 
         /**
          * Trigger pin of this HC-SR04.
@@ -109,6 +118,8 @@ class HCSR04 {
          */
         float computeInches();
 
+        void resetEchoTimestamps();
+        
     public:
         /**
          * Defines the sensors pins and connects them to the ESP32, and sets the thresholds of a sensor.
@@ -118,12 +129,13 @@ class HCSR04 {
          * @param obstacleDetectionThreshold The distance from the sensor (in inches) that an obstacle must be to be "detected".
          * @param notif Notification value to be used by this sensor from within its calling task.
          */
-        HCSR04(int trigger, int echo, SensorID id, int obstacleDetectionThreshold, NotificationMask notif) : 
+        HCSR04(int trigger, int echo, SensorID id, int obstacleDetectionThreshold, NotificationMask notifValid, NotificationMask notifInvalid = UNSET) : 
             trigger(trigger), 
             echo(echo), 
             id(id), 
             obstacleDetectionThreshold(obstacleDetectionThreshold),
-            notif(notif) {};
+            notifValid(notifValid),
+            notifInvalid(notifInvalid) {};
 
         /**
          * Initializes the sensor pin connections wrt the ESP32 and enables sensor.
@@ -214,9 +226,11 @@ class HCSR04 {
 
         bool isTransducer();
         SensorID identify();
-        void attachTaskHandle(TaskHandle_t handle);
+        String getName();
+        void attachTaskHandle(TaskHandle_t *handlePtr);
         TaskHandle_t getTaskHandle();
-        NotificationMask getNotifValue();
+        NotificationMask getReadingValidBits();
+        NotificationMask getReadingInvalidBits();
         ulong getISRStartPulse();
         ulong getISREndPulse();
 };

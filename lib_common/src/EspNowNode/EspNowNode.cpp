@@ -30,7 +30,7 @@ void esp_now_tx_rx_task(void *pvParams) {
             txGood = node->transmit();
             if(txGood) printRxMsg = true;
             else {
-                Serial.println("Failed Transmission");
+                log_e("Failed Transmission.");
                 node->reRegister();
             }
         }
@@ -188,7 +188,7 @@ bool EspNowNode::registerDataSentCallBack(ProcessDataCallback pcb) {
     return true;
 }
 
-bool EspNowNode::start() {
+bool EspNowNode::start(bool wiFiAlreadyStarted) {
 
     // Ensure proper callbacks are registered.
     bool success = false;
@@ -196,7 +196,7 @@ bool EspNowNode::start() {
     
     // Only start if callbacks are all good.
     if(success) {
-        initWifi();
+        if(wiFiAlreadyStarted == false) initWifi();
         initESPNOW();
         initTasks();
     }

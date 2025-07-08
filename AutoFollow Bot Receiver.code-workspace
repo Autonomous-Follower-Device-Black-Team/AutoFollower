@@ -22,7 +22,13 @@
 			"span": "cpp",
 			"thread": "cpp",
 			"iterator": "cpp",
-			"atomic": "cpp"
+			"atomic": "cpp",
+			"chrono": "cpp",
+			"variant": "cpp",
+			"bitset": "cpp",
+			"cstdlib": "cpp",
+			"mutex": "cpp",
+			"regex": "cpp"
 		}
 	}
 }

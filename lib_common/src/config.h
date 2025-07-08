@@ -3,14 +3,17 @@
 
 #include <Arduino.h>
 
+#define af_SSID "SEEMS"
+#define af_PASSWORD "@Ucf2025"
+
 #define TESTING_LEFT_RX_ONLY 0
 #define TESTING_RIGHT_RX_ONLY 0
 
-#define RX_DRIVE_SYSTEM_ON 0
+#define RX_DRIVE_SYSTEM_ON 1
 #define RX_ULTRASONIC_SYSTEM_ON 1
 #define TX_ULTRASONIC_SYSTEM_ON 1
-#define L_RX_DEBUG 0
-#define R_RX_DEBUG 0
+#define RX_DEBUG 0
+#define DUMP_RX_DIFF 0
 
 #define BAUD_RATE 115200
 
@@ -18,18 +21,29 @@ typedef uint32_t NotificationMask;  // Mask to delineate between Notifcations.
 typedef uint32_t milliSeconds;
 
 #define UNSET ((NotificationMask) 0xFFFF)
-#define T_US_READY ((NotificationMask) 0x0001)  // Transducer ultrasonic sensor notification.
-#define L_US_READY ((NotificationMask) 0x0002)  // Left ultrasonic sensor notification.
-#define R_US_READY ((NotificationMask) 0x0003)  // Right ultrasonic sensor notification.
-#define L_TD_READY ((NotificationMask) 0x0004)  // Left Transducer notification.
-#define R_TD_READY ((NotificationMask) 0x0005)  // Right Transducer notification.
-#define MOT_E_STOP ((NotificationMask) 0x0005)  // Emergency stop notification.
-#define MOT_RESUME ((NotificationMask) 0x0006)  // Resume movemment notification.
+#define T_US_READY ((NotificationMask) (1 << 0))        // Transducer ultrasonic sensor notification.
+#define L_US_READY ((NotificationMask) (1 << 1))        // Left ultrasonic sensor notification.
+#define R_US_READY ((NotificationMask) (1 << 2))        // Right ultrasonic sensor notification.
 
-#define TD_READY (L_TD_READY | R_TD_READY)  // Both Rx transducers ready to be used.
+#define L_TD_VALID ((NotificationMask) (1 << 3))        // Left receiving transducer is valid notification.
+#define R_TD_VALID ((NotificationMask) (1 << 4))        // Right receiving transducer notification.
+#define L_TD_READY ((NotificationMask) 1 << 7)          // Left receiving transducer data ready.
+#define R_TD_READY ((NotificationMask) 1 << 8)          // Right Receiving transducer data ready.
 
-#define TTR_US 40  // Time-to-read a single ultrasonic sensor (in milliseconds).
-#define US_READ_TIME ((milliSeconds) pdMS_TO_TICKS(TTR_US))     // The maximum time it takes to read an ultrasonic sensor (in ticks).
+#define MOT_E_STOP ((NotificationMask) (1 << 9))         // Emergency stop notification.
+#define MOT_RESUME ((NotificationMask) (1 << 10))        // Resume movemment notification.
+#define TRIG_L_RX ((NotificationMask) (1 << 11))         // Trigger left receiving transducer notification.
+#define TRIG_R_RX ((NotificationMask) (1 << 12))         // Trigger right receiving transducer notification.
+#define ECHO_DIFF_READY ((NotificationMask) 1 << 13)     // Rx echo duration difference ready to be processed.
+
+#define TD_READY (L_TD_READY | R_TD_READY)               // Both Rx transducers ready to be used.
+#define TD_VALID (L_TD_VALID | R_TD_VALID)
+#define TD_INVALID (!L_TD_VALID | !R_TD_VALID)
+
+#define TRIG_RX (TRIG_L_RX | TRIG_R_RX)                 // Receiver trigger syncing notification.
+
+//#define TTR_US 40  // Time-to-read a single ultrasonic sensor (in milliseconds).
+//#define US_READ_TIME ((milliSeconds) pdMS_TO_TICKS(TTR_US))     // The maximum time it takes to read an ultrasonic sensor (in ticks).
 
 /**
  * Identify which ESP32 SoC is in Use.

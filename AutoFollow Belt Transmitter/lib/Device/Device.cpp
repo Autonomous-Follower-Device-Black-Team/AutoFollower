@@ -66,22 +66,23 @@ BaseType_t Device::processDataSent(const char* data) {
 
 void Device::init() {
     startPeripheralManager();
-    startESPNow();
+    startESPNow(WiFi.status() == WL_CONNECTED);
     startDriveSystem();
 }
 
 void Device::startPeripheralManager()  {
+    manager->createEventGroups();
+    manager->createSemaphores();
     manager->beginTasks();
     manager->initUS();
-    manager->attachInterrupts();
 }
 
-void Device::startESPNow() {
+void Device::startESPNow(bool wiFiOn) {
     tx->registerProcessHandshakeCallBack(Device::processHandshake);
     tx->registerProcessWaveCallBack(Device::processWave);
     tx->registerProcessInfoReceivedCallBack(Device::processInfoReceived);
     tx->registerDataSentCallBack(Device::processDataSent);
-    tx->start();
+    tx->start(wiFiOn);
 }
 
 void Device::startDriveSystem() {

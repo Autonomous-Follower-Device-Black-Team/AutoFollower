@@ -7,16 +7,17 @@ void trigger_timer_callback(void *arg) {
     Device *dev = static_cast<Device *>(arg);
     dev->setTriggerTimerFlag(true);
     dev->timer_on = false;
+
+    // Notify the transmitter.
     if(dev->isTransmitter()) {
         if(trig_tx_transducer_task_handle != NULL) xTaskNotify(trig_tx_transducer_task_handle, -1, eNoAction);
         else log_e("Notify Tx Trigger Failed. Null Task Handle.");
     }
-    else {
-        if(trig_left_rx_transducer_task_handle != NULL) xTaskNotify(trig_left_rx_transducer_task_handle, -1, eNoAction);
-        else if(!TESTING_LEFT_RX_ONLY) log_e("Notify Left Rx Trigger Failed. Null Task Handle.");
 
-        if(trig_right_rx_transducer_task_handle != NULL) xTaskNotify(trig_right_rx_transducer_task_handle, -1, eNoAction);
-        else if(!TESTING_RIGHT_RX_ONLY) log_e("Notify Right Rx Trigger Failed. Null Task Handle.");
+    // Notify the receivers.
+    else {
+        if(rx_trig_sync_group != NULL) xEventGroupSetBits(rx_trig_sync_group, TRIG_RX);
+        else log_e("Notify Rx Event Group failed. Null EventGroup.");
     }
 }
 
@@ -70,21 +71,26 @@ BaseType_t Device::processDataSent(const char* data) {
 
 void Device::init() {
     startPeripheralManager();
-    startESPNow();
+    startESPNow(WiFi.status() == WL_CONNECTED);
 }
 
 void Device::startPeripheralManager()  {
-    manager->beginTasks();
+
+    // Start peripherals.
     manager->initPeripherals();
-    manager->attachInterrupts();
+    
+    // Start RTOS.
+    manager->createSemaphores();
+    manager->createEventGroups();
+    manager->beginTasks();
 }
 
-void Device::startESPNow() {
+void Device::startESPNow(bool wiFiOn) {
     tx->registerProcessHandshakeCallBack(Device::processHandshake);
     tx->registerProcessWaveCallBack(Device::processWave);
     tx->registerProcessInfoReceivedCallBack(Device::processInfoReceived);
     tx->registerDataSentCallBack(Device::processDataSent);
-    tx->start();
+    tx->start(wiFiOn);
 }
 
 

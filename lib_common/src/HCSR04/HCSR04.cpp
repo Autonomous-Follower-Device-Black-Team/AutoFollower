@@ -1,11 +1,49 @@
 #include "HCSR04.h"
 
+void on_echo_changed(void *arg) {
+    ulong currTime = micros();
+    HCSR04 *transducer = static_cast<HCSR04 *>(arg);
+
+    // Grab the pin state.
+    int pinState = digitalRead(transducer->getEchoPinNumber());
+
+    // Track changes and act accordingly.
+    if(pinState == HIGH) transducer->setISRStartPulse(currTime);
+    else {
+        transducer->setISREndPulse(currTime);
+
+        // Notify the specified task.
+        TaskHandle_t handle = transducer->getTaskHandle();
+        NotificationMask notifValue = transducer->getReadingValidBits();
+        if(handle != NULL && notifValue != UNSET) {
+            BaseType_t higherPriorityWasAwoken = pdFALSE;
+            xTaskNotifyFromISR(handle, notifValue, eSetBits, &higherPriorityWasAwoken);
+            portYIELD_FROM_ISR(higherPriorityWasAwoken);
+        }
+        else {
+            if(handle == NULL) log_e("HC-SR04[%d]: Null Task Handle.", transducer->identify());
+            if(notifValue == UNSET) log_e("HC-SR04[%d]: Notif Value Unset.", transducer->identify());
+        }
+    }
+}
+
 /**
  * Initializes the sensor pin connections wrt the ESP32 and enables sensor.
  */
 void HCSR04::init() {
+    // Define pin connections.
     pinMode(trigger, OUTPUT);
     pinMode(echo, INPUT);
+
+    // Attach interrupt.
+    attachInterruptArg(
+        this->echo, 
+        on_echo_changed, 
+        this, 
+        CHANGE
+    );
+
+    // Enable sensor for use.
     enable();
 }
 
@@ -21,17 +59,26 @@ bool HCSR04::readSensor(TickType_t xMaxBlockTime) {
         log_e("Invalid Read. Sensor(%d) inactive.", id);
         return res;
     }
-    if(taskHandle == NULL) {
-        log_e("Read Issue w/ ID: %d. Task Handle Not Set.", this->id);
+    if(*taskHandlePtr == NULL) {
+        log_e("Unable to read: %s. Null Task Handle.", this->getName().c_str());
         return res;
     }
 
-    // Pulse trigger for 10 us.
+    // Reset Echo and Pulse trigger for 10 us.
+    //resetEchoTimestamps();
     pulseTrigger();
     
     // Wait for pulse to complete.
-    uint32_t pulseFinishedEvent = ulTaskNotifyTake(pdTRUE, xMaxBlockTime);
-    if(pulseFinishedEvent != 0) {
+    ulong pulseFinishedEvent, echoHighTime;
+    BaseType_t waitSuccess;
+    waitSuccess = xTaskNotifyWait(this->notifValid, this->notifValid, &pulseFinishedEvent, xMaxBlockTime);
+    echoHighTime = isrPulseEnd - isrPulseStart;
+
+    // Reset values if out of range.
+    if(echoHighTime >= TTR_US*1000 || echoHighTime == 0) resetEchoTimestamps();
+
+    // Compute distance if in range.
+    else if((pulseFinishedEvent & this->notifValid) == this->notifValid && waitSuccess == pdTRUE) {
         // Compute distance just measured.
         float inches = computeInches();
 
@@ -42,10 +89,6 @@ bool HCSR04::readSensor(TickType_t xMaxBlockTime) {
         if(distIndex == bufferSize) distIndex = 0;
         pastDistances[distIndex++] = inches;
         res = true;
-    }
-    else {
-        setISRStartPulse(0);
-        setISREndPulse(0);
     }
 
     // Return.
@@ -175,6 +218,11 @@ float HCSR04::computeInches() {
     return distanceInInches;
 }
 
+void HCSR04::resetEchoTimestamps() {
+    isrPulseEnd = 1;
+    isrPulseStart = 1; 
+}
+
 void HCSR04::setISRStartPulse(ulong start) {
     isrPulseStart = start;
 }
@@ -197,9 +245,43 @@ int HCSR04::getTriggerPinNumber() { return trigger; }
 int HCSR04::getEchoPinNumber() { return echo; }
 
 bool HCSR04::isTransducer() { return (id != SensorID::leftObsDet) && (id != SensorID::rightObsDet); }
+
 SensorID HCSR04::identify() { return id; }
-void HCSR04::attachTaskHandle(TaskHandle_t handle) { this->taskHandle = handle; }
-TaskHandle_t HCSR04::getTaskHandle() { return this->taskHandle; }
-NotificationMask HCSR04::getNotifValue() { return this->notif; }
+
+String HCSR04::getName() {
+    String res;
+    switch (id) {
+        case (SensorID::txTransducer):
+            res = "tx_td";
+            break;
+
+        case (SensorID::leftRxTransducer):
+            res = "l_rx_td";
+            break;
+
+        case (SensorID::rightRxTransducer):
+            res = "r_rx_td";
+            break;
+
+        case (SensorID::leftObsDet) : 
+            res = "l_od_us";
+            break;
+
+        case (SensorID::rightObsDet) : 
+            res = "r_od_us";
+            break;
+    }
+    return res;
+}
+
+void HCSR04::attachTaskHandle(TaskHandle_t *handlePtr) { this->taskHandlePtr = handlePtr; }
+
+TaskHandle_t HCSR04::getTaskHandle() { return *(this->taskHandlePtr); }
+
+NotificationMask HCSR04::getReadingValidBits() { return this->notifValid; }
+
+NotificationMask HCSR04::getReadingInvalidBits() { return this->notifInvalid; }
+
 ulong HCSR04::getISRStartPulse() {return this->isrPulseStart; }
+
 ulong HCSR04::getISREndPulse() { return this->isrPulseEnd; }

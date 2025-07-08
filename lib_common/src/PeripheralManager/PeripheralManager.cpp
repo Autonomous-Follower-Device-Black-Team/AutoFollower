@@ -2,8 +2,10 @@
 #include "Device.h"
 
 // Define Event Group and Mutex Handles.
+EventGroupHandle_t rx_trig_sync_group = NULL;
 EventGroupHandle_t rx_echo_time_group = NULL;
 SemaphoreHandle_t rx_echo_time_mutex = NULL;
+SemaphoreHandle_t echo_diff_buffer_mutex = NULL;
 
 // Define task handles.
 TaskHandle_t trig_tx_transducer_task_handle = NULL;  
@@ -47,75 +49,49 @@ void trig_tx_transducer_task(void *pvPeripheralManager) {
     }
 }
 
-void trig_left_rx_transducer_task(void *pvPeripheralManager) {
+void trig_rx_transducer_task(void *pvPeripheralManager) {
     // Initialize task.
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
-    HCSR04 *transducer = manager->fetchUS(SensorID::leftRxTransducer); 
-
+    HCSR04 *transducer = manager->fetchTransducer(xTaskGetCurrentTaskHandle()); 
+    NotificationMask tdTrigBits = (transducer->identify() == SensorID::leftRxTransducer) ? TRIG_L_RX : TRIG_R_RX;
+    NotificationMask tdReady = (transducer->identify() == SensorID::leftRxTransducer) ? L_TD_READY : R_TD_READY;
+    EventBits_t triggerWatch;
     bool readingGood;
-    float instDistance, avgDistance;
 
     for(;;) {
 
-        // Wait for notifcation from trigger timer before trigger.
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  
+        // Block until trigger ready.
+        triggerWatch = xEventGroupWaitBits(
+            rx_trig_sync_group,     // Event group to watch.
+            tdTrigBits,             // Bits to wait for.
+            pdTRUE,                 // Clear on exit.
+            pdTRUE,                 // Wait for all bits to be set before unblocking.
+            portMAX_DELAY           // Wait for the longest amount of time.
+        );
 
-        readingGood = transducer->readSensor(US_READ_TIME);
-        if(readingGood) {
-            instDistance = transducer->getDistanceReading() * 2;
-            avgDistance = transducer->getLastBufferAverage() * 2;
+        // Trigger transducer.
+        readingGood = transducer->readSensor(RX_US_READ_TIME);
 
-            // Grab the semaphore and set the times.
-            if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
-                manager->fillUsTimingGroup(transducer->identify());
-                xSemaphoreGive(rx_echo_time_mutex);
-            }
-
-            // Set relevant bits in the event group.
-            xEventGroupSetBits(rx_echo_time_group, transducer->getNotifValue());
-
-            if(L_RX_DEBUG) Serial.printf("Left Rx: Distance: %f, Average: %f\n", instDistance, avgDistance);
+        // Grab the semaphore and set the times.
+        if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
+            manager->fillUsTimingGroup(transducer->identify());
+            xSemaphoreGive(rx_echo_time_mutex);
         }
-        else 
-            if(L_RX_DEBUG) log_e("Left Rx Failed.");
-    }
-}
 
-void trig_right_rx_transducer_task(void *pvPeripheralManager) {
-    // Initialize task.
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-
-    PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
-    HCSR04 *transducer = manager->fetchUS(SensorID::rightRxTransducer); 
-
-    bool readingGood;
-    float instDistance, avgDistance;
-
-    for(;;) {
-
-        // Wait for notifcation from trigger timer before trigger.
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  
-
-        readingGood = transducer->readSensor(US_READ_TIME);
-        if(readingGood) {
-            instDistance = transducer->getDistanceReading() * 2;
-            avgDistance = transducer->getLastBufferAverage() * 2;
-
-            // Grab the semaphore and set the times.
-            if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
-                manager->fillUsTimingGroup(transducer->identify());
-                xSemaphoreGive(rx_echo_time_mutex);
+        // Debug if necessary.
+        if(RX_DEBUG) {
+            if(readingGood) {
+                float instDistance = transducer->getDistanceReading() * 2;
+                float avgDistance = transducer->getLastBufferAverage() * 2;
+                Serial.printf("[%s] Rx: Distance: %f, Average: %f\n", transducer->getName().c_str(), instDistance, avgDistance);
             }
-
-            // Set relevant bits in the event group.
-            xEventGroupSetBits(rx_echo_time_group, transducer->getNotifValue());
-
-            if(R_RX_DEBUG) Serial.printf("Right Rx: Distance: %f, Average: %f\n", instDistance, avgDistance);
+            else log_e("[%d] Rx Failed.", transducer->identify());
         }
-        else 
-            if(R_RX_DEBUG) log_e("Right Rx Failed.");
+    
+        // Event: Transducer (left/right) data ready.
+        xEventGroupSetBits(rx_echo_time_group, tdReady);
     }
 }
 
@@ -135,38 +111,47 @@ void left_right_rx_diff_task(void *pvPeripheralManager) {
 
         // Block until both echoes are ready. 
         echoes = xEventGroupWaitBits(
-            rx_echo_time_group,     // Event group to notify.
+            rx_echo_time_group,     // Event group to watch.
             TD_READY,               // Bits to wait for.
             pdTRUE,                 // Clear on exit.
             pdTRUE,                 // Wait for all bits to be set before unblocking.
             portMAX_DELAY           // Wait for the longest amount of time.
         );
 
-        // Deal w/ the events ready.
-        if((echoes & TD_READY) == TD_READY) {
-            
-            // Grab the semaphore and grab the times.
-            if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
-                lst = timingGroup->leftStartTime;
-                let = timingGroup->leftEndTime;
-                rst = timingGroup->rightStartTime;
-                ret = timingGroup->rightEndTime;
-                xSemaphoreGive(rx_echo_time_mutex);
-            }
-            // Grab start and end. 
-            //Serial.printf("L(e - s): %lld - %lld = %lld\n", let, lst, let - lst);
-            //Serial.printf("R(e - s): %lld - %lld = %lld\n", ret, rst, ret - rst);
-            
-            Serial.printf("%d; %lld; %lld; %lld;  %lld; %lld; %lld; %f; %f\n", i++, let, lst, ret, rst, let - lst, ret - rst, ((float)(let - lst))/74.0,  ((float)(ret - rst))/74.0 );
-
-            // Compute and return the difference (right biased).
-            difference = ret - let;
-            //Serial.printf("Time Difference: %lld\n", difference);
+        // Skip over unexpected events with a log message.
+        if((echoes & TD_READY) != TD_READY) {
+            log_e("Unexpected Event: 0x%x", echoes);
+            continue;
         }
-        else log_e("diff task unblocked: 0%x", echoes);
+
+        // Grab the semaphore and grab the times.
+        if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
+            lst = timingGroup->leftStartTime;
+            let = timingGroup->leftEndTime;
+            rst = timingGroup->rightStartTime;
+            ret = timingGroup->rightEndTime;
+            xSemaphoreGive(rx_echo_time_mutex);
+        }
+    
+        // Dump data if debugging.
+        if(DUMP_RX_DIFF) dump_rx_diff_info(lst, rst, let, ret);
+
+        // Compute and store difference between echo high times (right biased).
+        //difference = (ret - rst) - (let - lst);
+        difference = ret - let;
+        if(xSemaphoreTake(echo_diff_buffer_mutex, portMAX_DELAY) == pdTRUE) {
+            manager->addToBuffer(difference);
+            xSemaphoreGive(echo_diff_buffer_mutex);
+        }
+
+        // Notify the movement manager Task given that data is ready.
+        if(manager->isBufferReadyForUse() && RX_DRIVE_SYSTEM_ON) {
+            if(mvmt_manager_task_handle != NULL) xTaskNotify(mvmt_manager_task_handle, ECHO_DIFF_READY, eSetBits);
+            else log_e("Movement Manager Task not notified. Null.");
+        }
+        
     }
 }
-
 
 void poll_obs_detection_uss_task(void *pvPeripheralManager) {
     // Initialize task.
@@ -213,33 +198,30 @@ void obs_det_stop_task(void *pvPeripheralManager) {
 void mvmt_manager_task(void *pvPeripheralManager) {
     // Initialize task.
     TickType_t xLastWakeTime = xTaskGetTickCount();
-
     PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
     BTS7960 *driveSystem = manager->getDriveSystem();
+    
+    float avgEchoDiff = 0;
 
     for(;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    }
-}
+        // Block until notified.
+        uint32_t notifValue = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-void on_hcsr04_us_echo_changed(void *arg) {
-    ulong currTime = micros();
-    HCSR04 *transducer = static_cast<HCSR04 *>(arg);
-    int pinState = digitalRead(transducer->getEchoPinNumber());
-    if(pinState == HIGH) transducer->setISRStartPulse(currTime);
-    else {
-        transducer->setISREndPulse(currTime);
-        TaskHandle_t handle = transducer->getTaskHandle();
-        NotificationMask notifValue = transducer->getNotifValue();
-        if(handle != NULL && notifValue != UNSET) {
-            BaseType_t higherPriorityWasAwoken = pdFALSE;
-            xTaskNotifyFromISR(transducer->getTaskHandle(), transducer->getNotifValue(), eSetBits, &higherPriorityWasAwoken);
-            portYIELD_FROM_ISR(higherPriorityWasAwoken);
+        // Ensure correct notificiation.
+        if((notifValue & ECHO_DIFF_READY) != ECHO_DIFF_READY) {
+            log_e("Mvmt Manager Incorrectly Notified.");
+            continue;;
         }
-        else {
-            if(handle == NULL) log_e("HC-SR04[%d]: Null Task Handle.", transducer->identify());
-            if(notifValue == UNSET) log_e("HC-SR04[%d]: Notif Value Unset.", transducer->identify());
+
+        // Grab new difference data.
+        if(xSemaphoreTake(echo_diff_buffer_mutex, portMAX_DELAY) == pdTRUE) {
+            avgEchoDiff = manager->getDiffBufferAverage();
+            xSemaphoreGive(echo_diff_buffer_mutex);
         }
+
+        // Print avg.
+        Serial.printf("%f\n", avgEchoDiff);
+
     }
 }
 
@@ -266,17 +248,6 @@ void PeripheralManager::initPeripherals(){
     initDriveSystem();
 }
 
-void PeripheralManager::attachInterrupts() {
-    if(dev->isTransmitter()) {
-        attachBeltInterrupts();
-        log_e("Belt interrupts attached.");
-    }
-    else {
-        attachBotInterrupts();
-        log_e("Bot interrupts attached.");
-    }   
-}
-
 /**
  * Initialze the Ultrasonic Sensors.
  */
@@ -285,7 +256,7 @@ void PeripheralManager::initUS() {
     // Initialize the ultrasonic sensors.
     if(dev->isTransmitter()) {
         txTransducer->init();
-        txTransducer->attachTaskHandle(trig_tx_transducer_task_handle);
+        txTransducer->attachTaskHandle(&trig_tx_transducer_task_handle);
     }
     else {
         leftRxTransducer->init();
@@ -293,95 +264,58 @@ void PeripheralManager::initUS() {
         leftObsDetUS->init();
         rightObsDetUS->init();
 
-        leftRxTransducer->attachTaskHandle(trig_left_rx_transducer_task_handle);
-        rightRxTransducer->attachTaskHandle(trig_right_rx_transducer_task_handle);
-        leftObsDetUS->attachTaskHandle(poll_obs_detection_uss_handle);
-        rightObsDetUS->attachTaskHandle(poll_obs_detection_uss_handle);
+        this->initEchoDifferenceBuffer();
+
+        leftRxTransducer->attachTaskHandle(&trig_left_rx_transducer_task_handle);
+        rightRxTransducer->attachTaskHandle(&trig_right_rx_transducer_task_handle);
+        leftObsDetUS->attachTaskHandle(&poll_obs_detection_uss_handle);
+        rightObsDetUS->attachTaskHandle(&poll_obs_detection_uss_handle);
     }
     log_e("Ultrasonic Subsystem Initialized.");
 }
 
-void PeripheralManager::attachBeltInterrupts() {
-    int txEcho;
-    switch (dev->getSocInUse()) {
-        case SocConfig::ESP32_4MB :
-            txEcho = (int) BeltPin::single_uss_echo;
-            log_e("Succesfully Attached Belt Transducer Interrupt (ESP32).");
-            break;
-
-        case SocConfig::ESP32_S3_8MB :
-            txEcho = (int) S3BeltPin::single_uss_echo;
-            log_e("Succesfully Attached Belt Transducer Interrupt (ESP32-S3).");
-            break;
-
-        default:
-            log_e("Invalid Soc Config. No Valid interrutps.");
-            break;
+void PeripheralManager::createSemaphores() {
+    
+    // Create transmitter semaphores.
+    if(this->dev->isTransmitter()) {
+        // Currently no Transmitter semaphores.
     }
 
-    attachInterruptArg(
-        txEcho, 
-        on_hcsr04_us_echo_changed,
-        txTransducer, 
-        CHANGE
-    );
+    // Create receiver semaphores.
+    else {
+        if(RX_ULTRASONIC_SYSTEM_ON) {
+            rx_echo_time_mutex = xSemaphoreCreateMutex();
+            if(rx_echo_time_mutex == NULL) log_e("Echo Timing Mutex not created");
+            else log_e("Echo Timing Mutex created.");
+
+            echo_diff_buffer_mutex = xSemaphoreCreateMutex();
+            if(echo_diff_buffer_mutex == NULL) log_e("Echo Difference History Mutex not created.");
+            else log_e("Echo Difference History Mutex created.");
+        }
+        else log_e("Rx Ultrasonic Subsystem Event Groups not created. Check config.");
+    }
 }
 
-void PeripheralManager::attachBotInterrupts() {
-    int leftObsEcho, rightObsEcho;
-    int leftTransducerEcho, rightTransducerEcho;
+void PeripheralManager::createEventGroups() {
     
-    switch (dev->getSocInUse()) {
-        case SocConfig::ESP32_4MB :
-            // Attach interrupts for echo pins on 2 rx transducers.
-            leftTransducerEcho = (int) BotPin::left_us_transducer_echo;
-            rightTransducerEcho = (int) BotPin::right_us_transducer_echo;
-            leftObsEcho = (int) BotPin::left_hcsr04_echo;
-            rightObsEcho = (int) BotPin::right_hcsr04_echo; 
-            log_e("Succesfully Attached Bot Transducer Interrupt (ESP32).");
-            break;
-
-        case SocConfig::ESP32_S3_8MB :
-            leftTransducerEcho = (int) S3BotPin::left_us_transducer_echo;
-            rightTransducerEcho = (int) S3BotPin::right_us_transducer_echo;
-            leftObsEcho = (int) S3BotPin::left_hcsr04_echo;
-            rightObsEcho = (int) S3BotPin::right_hcsr04_echo;
-            log_e("Succesfully Attached Bot Transducer Interrupt (ESP32-S3).");
-            break;
-
-        default:
-            log_e("Invalid Soc Config. No Valid interrutps.");
-            break;
+    // Create transmitter event groups.
+    if(this->dev->isTransmitter()) {
+        // Currently no transmitter event groups.
     }
 
-    attachInterruptArg(
-        leftTransducerEcho, 
-        on_hcsr04_us_echo_changed, 
-        this->leftRxTransducer, 
-        CHANGE
-    );
+    // Create receiver event groups.
+    else {
+        if(RX_ULTRASONIC_SYSTEM_ON) {
+            rx_echo_time_group = xEventGroupCreate();
+            if(rx_echo_time_group == NULL) log_e("Echo Timing event group not created.");
+            else log_e("Echo Timing event group created.");
 
-    attachInterruptArg(
-        rightTransducerEcho, 
-        on_hcsr04_us_echo_changed, 
-        this->rightRxTransducer, 
-        CHANGE
-    );
-
-    // Attach interrupts fro echo pins on 2 obstacle detection HC-SR04s.
-    attachInterruptArg(
-        leftObsEcho, 
-        on_hcsr04_us_echo_changed, 
-        this->leftObsDetUS, 
-        CHANGE
-    );
-
-    attachInterruptArg(
-        rightObsEcho, 
-        on_hcsr04_us_echo_changed, 
-        this->rightObsDetUS, 
-        CHANGE
-    );
+            rx_trig_sync_group = xEventGroupCreate();
+            if(rx_trig_sync_group == NULL) log_e("Trigger Syncing event group not created.");
+            else log_e("Trigger Syncing event group created.");
+        }
+        else log_e("Rx Ultrasonic Subsystem Event Groups not created. Check config.");
+    }
 }
 
 // Per name.
@@ -405,14 +339,6 @@ void PeripheralManager::beginTasks() {
 
         // Start the ultrasonic subsystem.
         if(RX_ULTRASONIC_SYSTEM_ON) {
-            // Create the echo timing event group and paired semaphore.
-            rx_echo_time_group = xEventGroupCreate();
-            if(rx_echo_time_group == NULL) log_e("Echo Timing event group not created.");
-            else log_e("Echo Timing event group created.");
-
-            rx_echo_time_mutex = xSemaphoreCreateMutex();
-            if(rx_echo_time_mutex == NULL) log_e("Echo Timing Mutex not created");
-            else log_e("Echo Timing Mutex created.");
 
             taskCreated = beginTransducerTriggerTasks();
             if(taskCreated != pdPASS) log_e("Transducer trigger tasks not created. Fail Code: %d\n", taskCreated);
@@ -426,7 +352,7 @@ void PeripheralManager::beginTasks() {
             if(taskCreated != pdPASS) log_e("Poll Obstacle Detection USS task not created. Fail Code: %d\n", taskCreated);
             else log_e("Poll Obstacle Detection USS task created.");
         }
-        else log_e("Rx Ultrasonic Subsystem not started. Check config.");
+        else log_e("Rx Ultrasonic Subsystem Tasks not started. Check config.");
         
         // Start the Drive System.
         if(RX_DRIVE_SYSTEM_ON) {
@@ -445,7 +371,7 @@ void PeripheralManager::beginTasks() {
 
 bool PeripheralManager::isTransmitter() { return dev->isTransmitter(); }
 
-HCSR04* PeripheralManager::fetchUS(SensorID id) {
+HCSR04 *PeripheralManager::fetchUS(SensorID id) {
     HCSR04 *res = NULL;
     switch (id) {
         case (SensorID::txTransducer):
@@ -469,6 +395,13 @@ HCSR04* PeripheralManager::fetchUS(SensorID id) {
             break;
 
     }
+    return res;
+}
+
+HCSR04 *PeripheralManager::fetchTransducer(TaskHandle_t handle) {
+    HCSR04 *res = NULL;
+    if(handle == leftRxTransducer->getTaskHandle()) res = leftRxTransducer;
+    else if(handle == rightRxTransducer->getTaskHandle()) res = rightRxTransducer;
     return res;
 }
 
@@ -509,8 +442,8 @@ BaseType_t PeripheralManager::beginTriggerTxTransducerTask() {
 BaseType_t PeripheralManager::beginTriggerLeftRxTransducerTask() {
     BaseType_t res;
     res = xTaskCreatePinnedToCore(
-        &trig_left_rx_transducer_task,          // Pointer to task function.
-        "trigger_left_rx_transducer_Task",      // Task name.
+        &trig_rx_transducer_task,               // Pointer to task function.
+        "trig_l_rx_td",                         // Task name.
         TaskStackDepth::tsd_TRIG,               // Size of stack allocated to the task (in bytes).
         this,                                   // Pointer to parameters used for task creation.
         TaskPriorityLevel::tpl_HIGH,            // Task priority level.
@@ -524,8 +457,8 @@ BaseType_t PeripheralManager::beginTriggerLeftRxTransducerTask() {
 BaseType_t PeripheralManager::beginTriggerRightRxTransducerTask() {
     BaseType_t res;
     res = xTaskCreatePinnedToCore(
-        &trig_right_rx_transducer_task,         // Pointer to task function.
-        "trigger_right_rx_transducer_task",     // Task name.
+        &trig_rx_transducer_task,               // Pointer to task function.
+        "trig_r_rx_td",                         // Task name.
         TaskStackDepth::tsd_TRIG,               // Size of stack allocated to the task (in bytes).
         this,                                   // Pointer to parameters used for task creation.
         TaskPriorityLevel::tpl_HIGH,            // Task priority level.
@@ -546,17 +479,22 @@ BaseType_t PeripheralManager::beginTransducerTriggerTasks() {
         if(TESTING_LEFT_RX_ONLY == true) {
             res = beginTriggerLeftRxTransducerTask();
             if(res != pdPASS) log_e("Left Rx Trigger Task not created.");
+            else log_e("Left Rx Trigger Task created.");
             return res;
         }
         if(TESTING_RIGHT_RX_ONLY == true) {
             res = beginTriggerRightRxTransducerTask();
             if(res != pdPASS) log_e("Right Rx Trigger Task not created.");
+            else log_e("Right Rx Trigger Task created.");
             return res;
         }
         res = beginTriggerLeftRxTransducerTask();
         res2 = beginTriggerRightRxTransducerTask();
         if(res != pdPASS) log_e("Left Rx Trigger Task not created.");
+        else log_e("Left Rx Trigger Task created.");
+
         if(res2 != pdPASS) log_e("Right Rx Trigger Task not created.");
+        else log_e("Right Rx Trigger Task created.");
         return res && res2;
     }
 }
@@ -672,7 +610,8 @@ void PeripheralManager::constructBotPeripherals() {
         leftTransducerEcho,
         SensorID::leftRxTransducer,
         OBS_LIM,
-        L_TD_READY
+        L_TD_VALID,
+        !L_TD_VALID
     );
 
     this->rightRxTransducer = new HCSR04(
@@ -680,7 +619,8 @@ void PeripheralManager::constructBotPeripherals() {
         rightTransducerEcho,
         SensorID::rightRxTransducer,
         OBS_LIM,
-        R_TD_READY
+        R_TD_VALID,
+        !R_TD_VALID
     );
 
     this->rightObsDetUS = new HCSR04(
@@ -740,3 +680,64 @@ BaseType_t PeripheralManager::beginMovementManagerTask() {
 }
 
 BTS7960 *PeripheralManager::getDriveSystem() { return this->driveSystem; }
+
+void PeripheralManager::initEchoDifferenceBuffer(int size) {
+    rxEchoDifferences.size = size;
+    rxEchoDifferences.index = 0;
+    rxEchoDifferences.readyForUse = false;
+    rxEchoDifferences.buffer = (signed long long *) malloc(sizeof(signed long long) * size);
+}
+
+void PeripheralManager::addToBuffer(signed long long value) {
+    if(rxEchoDifferences.index == rxEchoDifferences.size) {
+        rxEchoDifferences.index = 0;
+        if(!rxEchoDifferences.readyForUse) 
+            rxEchoDifferences.readyForUse = true;
+    }
+    rxEchoDifferences.buffer[rxEchoDifferences.index++] = value;
+}
+
+float PeripheralManager::getDiffBufferAverage() {
+    // Return error if buffer not ready for use.
+    if(!rxEchoDifferences.readyForUse) return BUF_INV;
+
+    // Take the average and return.
+    signed long long sum = 0;
+    for(int i = 0; i < rxEchoDifferences.size; i++)
+        sum += rxEchoDifferences.buffer[i];
+    return ((float) sum)/((float) rxEchoDifferences.size);
+}
+
+bool PeripheralManager::isBufferReadyForUse() {
+    return rxEchoDifferences.readyForUse;
+}
+
+void dump_rx_diff_info(signed long long lst, signed long long rst, signed long long let, signed long long ret) {
+    static int count = 0;
+
+    // Print header.
+    if(count == 0) {
+        Serial.printf("Count; L_t_end; L_t_sta; R_t_end; R_t_sta; L_echo_dur; R_echo_dur; echo_dur_diff(R-L); echo_end_diff(R-L); L_dist; R_dist\n");
+    }
+
+    // Print data.
+    signed long long echoEndDiff = ret - let;
+    bool diffPosAndLarger = (echoEndDiff > 0) && (echoEndDiff >= RX_DIFF_INVALID);
+    bool diffNegAndSmaller = (echoEndDiff < 0) && (echoEndDiff <= -1*RX_DIFF_INVALID);
+    if(diffPosAndLarger) echoEndDiff = RX_DIFF_INVALID;
+    else if(diffNegAndSmaller) echoEndDiff = -1*RX_DIFF_INVALID;
+
+    Serial.printf("%d; %lld; %lld; %lld; %lld; %lld; %lld; %lld; %lld; %f; %f\n", 
+        count++,                        // Counter.
+        let,                            // Left End Time
+        lst,                            // Left Start Time
+        ret,                            // Right End Time
+        rst,                            // Right Start Time
+        let - lst,                      // Left Echo High Time
+        ret - rst,                      // Right Echo High Time
+        (ret - rst) - (let - lst),      // Right Echo Dur - Left Echo Dur
+        echoEndDiff,                    // Right Echo End - Left Echo End
+        ((float)(let - lst))/74.0,      // Left Distance Recorded
+        ((float)(ret - rst))/74.0       // Right Distance Recorded
+    );
+}

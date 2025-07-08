@@ -9,7 +9,7 @@
 
 #define TaskDelayLength pdMS_TO_TICKS(100)
 #define ACK_TIMEOUT_MS 5000     // Transmission timeout length (ms).
-#define TX_DELAY_MS 60          // Extra delay for the transmitter. Used to pace Transmission frequency. 
+#define TX_DELAY_MS 100          // Extra delay for the transmitter. Used to pace Transmission frequency. 
 
 typedef BaseType_t (* ProcessDataCallback)(const char *);
 
@@ -176,7 +176,7 @@ class EspNowNode : ESP_NOW_Peer {
         bool registerDataSentCallBack(ProcessDataCallback pcb);
 
         // Methods to facilitate ESP-NOW transmission between nodes.
-        bool start();
+        bool start(bool wiFiAlreadyStarted = false);
         bool end();
         void pause();
         void unpause();
