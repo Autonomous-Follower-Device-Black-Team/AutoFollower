@@ -5,7 +5,7 @@
 void startWifi();
 
 SocConfig soc = SocConfig::ESP32_S3_8MB;
-Device belt(SocConfig::ESP32_S3_8MB, dev_S3_B, Mode::Transmitter, true);
+Device belt(SocConfig::ESP32_S3_8MB, dev_S3_AFD_RX, Mode::Transmitter, true);
 
 bool success = false;
 char info[1000]; 

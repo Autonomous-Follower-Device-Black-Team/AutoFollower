@@ -13,7 +13,7 @@
 #define RX_ULTRASONIC_SYSTEM_ON 1
 #define TX_ULTRASONIC_SYSTEM_ON 1
 #define RX_DEBUG 0
-#define DUMP_RX_DIFF 0
+#define DUMP_RX_DIFF 1
 
 #define BAUD_RATE 115200
 
@@ -59,10 +59,10 @@ typedef _soc_config SocConfig;
  * Bot (Receiver) Pin defintions - ESP32-S3 Config.
  */
 enum class _bot_pins_s3 : uint8_t {
-    left_us_transducer_trig = 7,
-    left_us_transducer_echo = 5,
-    right_us_transducer_trig = 6,
-    right_us_transducer_echo = 4,
+    left_us_transducer_trig = 41,
+    left_us_transducer_echo = 42,
+    right_us_transducer_trig = 2,
+    right_us_transducer_echo = 1,
 
     left_hcsr04_trig = 15,
     left_hcsr04_echo = 16,

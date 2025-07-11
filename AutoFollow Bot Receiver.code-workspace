@@ -28,7 +28,8 @@
 			"bitset": "cpp",
 			"cstdlib": "cpp",
 			"mutex": "cpp",
-			"regex": "cpp"
+			"regex": "cpp",
+			"functional": "cpp"
 		}
 	}
 }

@@ -220,7 +220,7 @@ void mvmt_manager_task(void *pvPeripheralManager) {
         }
 
         // Print avg.
-        Serial.printf("%f\n", avgEchoDiff);
+        //Serial.printf("%f\n", avgEchoDiff);
 
     }
 }
