@@ -4,11 +4,18 @@
 #include <Arduino.h>
 #include "Motor.h"
 
+enum _mvmt_state {
+    EMG_STOP,
+    PAUSED,
+    MOVING
+};
+typedef enum _mvmt_state MovementState;
+
 class BTS7960 {
     private:
         Motor leftMotors;
         Motor rightMotors;
-        bool emergencyStop = false;
+        MovementState driveStatus = MovementState::PAUSED;
 
         void setSpeed(int leftSideSpeed = BASE_SPEED, int rightSideSpeed = BASE_SPEED);
 
@@ -18,6 +25,7 @@ class BTS7960 {
             rightMotors(rightPwmL, rightPwmR) {}
         
         void init();
+        void move(int leftSpeed, int rightSpeed);
         void moveForward(int speed);
         void moveBackward(int speed);
         void rotateLeft();
@@ -26,8 +34,8 @@ class BTS7960 {
         void turnRight(int speedOffset);
         void stop();
 
-        bool getStopStatus();
-        void setStopStatus(bool status);
+        MovementState getMovementState();
+        void setMovementState(MovementState status);
 
 };
 

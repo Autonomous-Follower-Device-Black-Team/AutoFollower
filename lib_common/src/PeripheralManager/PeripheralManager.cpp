@@ -6,6 +6,7 @@ EventGroupHandle_t rx_trig_sync_group = NULL;
 EventGroupHandle_t rx_echo_time_group = NULL;
 SemaphoreHandle_t rx_echo_time_mutex = NULL;
 SemaphoreHandle_t echo_diff_buffer_mutex = NULL;
+SemaphoreHandle_t drive_system_mutex = NULL;
 
 // Define task handles.
 TaskHandle_t trig_tx_transducer_task_handle = NULL;  
@@ -102,9 +103,9 @@ void left_right_rx_diff_task(void *pvPeripheralManager) {
     HCSR04 *rightRx = manager->fetchUS(SensorID::rightRxTransducer);
     USTimeGroup *timingGroup = manager->getUsTimingGroup();
     EventBits_t echoes = -1;
-    signed long long difference;
-    signed long long lst, let, rst, ret;
-    uint i = 0;
+    signed long long echoDifference;
+    float avgDistance;
+    signed long long lst, let, rst, ret;    
 
     // Task Loop.
     for(;;) {
@@ -138,9 +139,10 @@ void left_right_rx_diff_task(void *pvPeripheralManager) {
 
         // Compute and store difference between echo high times (right biased).
         //difference = (ret - rst) - (let - lst);
-        difference = ret - let;
+        echoDifference = ret - let;
+        avgDistance = (leftRx->getDistanceReading() + rightRx->getDistanceReading())/2;  
         if(xSemaphoreTake(echo_diff_buffer_mutex, portMAX_DELAY) == pdTRUE) {
-            manager->addToBuffer(difference);
+            manager->addToBuffers(echoDifference, avgDistance);
             xSemaphoreGive(echo_diff_buffer_mutex);
         }
 
@@ -175,23 +177,23 @@ void obs_det_stop_task(void *pvPeripheralManager) {
         // Wait for notifcation from obstacle detection task.
         uint32_t emergencyStopEvent = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+        grabMutex(&drive_system_mutex);
         switch (emergencyStopEvent) {
             case (MOT_E_STOP):
                 driveSystem->stop();
-                driveSystem->setStopStatus(true);
-                // Take a sempaphore that is shared with the motor movement task.
+                driveSystem->setMovementState(MovementState::EMG_STOP);
                 log_e("Emergency Stop. Motors Stopped.");
                 break;
             
             case (MOT_RESUME):
-                // Release the semaphore.
-                driveSystem->setStopStatus(false);
+                driveSystem->setMovementState(MovementState::PAUSED);
                 break;
 
             default:
                 log_e("Unhandled Notification. Motors Stopped.");
                 break;
         }
+        releaseMutex(&drive_system_mutex);
     }
 } 
 
@@ -200,8 +202,11 @@ void mvmt_manager_task(void *pvPeripheralManager) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
     BTS7960 *driveSystem = manager->getDriveSystem();
-    
-    float avgEchoDiff = 0;
+    BangBangCtrlConfig *driveCfg = manager->getFollowingLogicConfig();
+    BufferAverages rxBuffers;
+    uint8_t steeringOffset, distanceOffset;
+    uint16_t leftMotSpeed, rightMotSpeed;
+    bool validMovePossible = false;
 
     for(;;) {
         // Block until notified.
@@ -213,11 +218,71 @@ void mvmt_manager_task(void *pvPeripheralManager) {
             continue;;
         }
 
-        // Grab new difference data.
+        /*
         if(xSemaphoreTake(echo_diff_buffer_mutex, portMAX_DELAY) == pdTRUE) {
             avgEchoDiff = manager->getDiffBufferAverage();
             xSemaphoreGive(echo_diff_buffer_mutex);
         }
+        */
+
+        // Grab new difference and distance data.
+        grabMutex(&echo_diff_buffer_mutex);
+        rxBuffers = manager->getDiffBufferAverages();
+        releaseMutex(&echo_diff_buffer_mutex);
+        
+        // Compute offsets, speeds, movement status.
+        distanceOffset = (uint8_t) (driveCfg->kz * (1 - driveCfg->targetDist/rxBuffers.distAvg));
+        steeringOffset = (uint8_t) (driveCfg->kp *  rxBuffers.echoDiffAvg);
+        leftMotSpeed = driveCfg->defSpeed + distanceOffset + steeringOffset;
+        rightMotSpeed = driveCfg->defSpeed + distanceOffset - steeringOffset;
+        validMovePossible = rxBuffers.distAvg > (driveCfg->targetDist * 1.05); // Current distance > 5% of target distance.
+
+        // Clamp Motor Speeds.
+        if(leftMotSpeed > driveCfg->maxSpeed) leftMotSpeed = driveCfg->maxSpeed;
+        else if(leftMotSpeed < driveCfg->minSpeed) leftMotSpeed = driveCfg->maxSpeed;
+
+        if(rightMotSpeed > driveCfg->maxSpeed) rightMotSpeed = driveCfg->maxSpeed;
+        else if(rightMotSpeed < driveCfg->minSpeed) rightMotSpeed = driveCfg->maxSpeed;
+
+        // Drive.
+        grabMutex(&drive_system_mutex);
+        
+        // Attempt movment only when an obstacle is not present.
+        switch(driveSystem->getMovementState()) {
+            case (MovementState::EMG_STOP):
+                // Do nothing.
+                break;
+
+            case (MovementState::PAUSED):
+                if(validMovePossible) {
+                    driveSystem->move(leftMotSpeed, rightMotSpeed);
+                    driveSystem->setMovementState(MovementState::MOVING);
+                }
+                break;
+
+            case (MovementState::MOVING):
+                if(validMovePossible) driveSystem->move(leftMotSpeed, rightMotSpeed);
+                else {
+                    driveSystem->stop();
+                    driveSystem->setMovementState(MovementState::PAUSED);
+                }   
+                break;
+                
+            default:
+                log_e("Errant Following Movement State...");
+                break;
+        }
+        
+        if(driveSystem->getMovementState() != MovementState::EMG_STOP) {
+            
+            // Check to see if within valid following Distance.
+            if(validMovePossible) {
+                driveSystem->move(leftMotSpeed, rightMotSpeed);
+            }
+            else driveSystem->stop();
+        }
+        releaseMutex(&drive_system_mutex);
+    
 
         // Print avg.
         //Serial.printf("%f\n", avgEchoDiff);
@@ -264,7 +329,7 @@ void PeripheralManager::initUS() {
         leftObsDetUS->init();
         rightObsDetUS->init();
 
-        this->initEchoDifferenceBuffer();
+        this->initRxHistoryBuffers();
 
         leftRxTransducer->attachTaskHandle(&trig_left_rx_transducer_task_handle);
         rightRxTransducer->attachTaskHandle(&trig_right_rx_transducer_task_handle);
@@ -275,7 +340,8 @@ void PeripheralManager::initUS() {
 }
 
 void PeripheralManager::createSemaphores() {
-    
+    bool success;
+
     // Create transmitter semaphores.
     if(this->dev->isTransmitter()) {
         // Currently no Transmitter semaphores.
@@ -284,13 +350,21 @@ void PeripheralManager::createSemaphores() {
     // Create receiver semaphores.
     else {
         if(RX_ULTRASONIC_SYSTEM_ON) {
-            rx_echo_time_mutex = xSemaphoreCreateMutex();
-            if(rx_echo_time_mutex == NULL) log_e("Echo Timing Mutex not created");
+            //rx_echo_time_mutex = xSemaphoreCreateMutex();
+            success = initMutex(&rx_echo_time_mutex);
+            if(success) log_e("Echo Timing Mutex not created");
             else log_e("Echo Timing Mutex created.");
 
-            echo_diff_buffer_mutex = xSemaphoreCreateMutex();
-            if(echo_diff_buffer_mutex == NULL) log_e("Echo Difference History Mutex not created.");
+            //echo_diff_buffer_mutex = xSemaphoreCreateMutex();
+            success = initMutex(&echo_diff_buffer_mutex);
+            if(success) log_e("Echo Difference History Mutex not created.");
             else log_e("Echo Difference History Mutex created.");
+        }
+
+        if(RX_DRIVE_SYSTEM_ON) {
+            success = initMutex(&drive_system_mutex);
+            if(success != true) log_e("Drive System Mutex not created.");
+            else log_e("Drive System Mutex created.");
         }
         else log_e("Rx Ultrasonic Subsystem Event Groups not created. Check config.");
     }
@@ -648,7 +722,10 @@ void PeripheralManager::constructBotPeripherals() {
 }
 
 void PeripheralManager::initDriveSystem() {
-    driveSystem->init();
+    if(this->isTransmitter() == false) {
+        this->driveSystem->init();
+        this->initBangBangCtrlConfig();
+    }
 }
 
 BaseType_t PeripheralManager::beginEmergencyStopTask()  {
@@ -681,35 +758,70 @@ BaseType_t PeripheralManager::beginMovementManagerTask() {
 
 BTS7960 *PeripheralManager::getDriveSystem() { return this->driveSystem; }
 
-void PeripheralManager::initEchoDifferenceBuffer(int size) {
-    rxEchoDifferences.size = size;
-    rxEchoDifferences.index = 0;
-    rxEchoDifferences.readyForUse = false;
-    rxEchoDifferences.buffer = (signed long long *) malloc(sizeof(signed long long) * size);
+void PeripheralManager::initRxHistoryBuffers(int size) {
+    rxHistoryBuffers.readyForUse = false;
+    rxHistoryBuffers.size = size;
+    rxHistoryBuffers.index = 0;
+    rxHistoryBuffers.echoBuffer = (signed long long *) malloc(sizeof(signed long long) * size);
+    rxHistoryBuffers.distBuffer = (float *) malloc(sizeof(float) * size);
 }
 
-void PeripheralManager::addToBuffer(signed long long value) {
-    if(rxEchoDifferences.index == rxEchoDifferences.size) {
-        rxEchoDifferences.index = 0;
-        if(!rxEchoDifferences.readyForUse) 
-            rxEchoDifferences.readyForUse = true;
+void PeripheralManager::addToBuffers(signed long long echoDiff, float avgDist) {
+    if(rxHistoryBuffers.index == rxHistoryBuffers.size) {
+        rxHistoryBuffers.index = 0;
+        if(!rxHistoryBuffers.readyForUse) 
+            rxHistoryBuffers.readyForUse = true;
     }
-    rxEchoDifferences.buffer[rxEchoDifferences.index++] = value;
+    rxHistoryBuffers.echoBuffer[rxHistoryBuffers.index] = echoDiff;
+    rxHistoryBuffers.distBuffer[rxHistoryBuffers.index] = avgDist;
+    rxHistoryBuffers.index++;
 }
 
-float PeripheralManager::getDiffBufferAverage() {
+BufferAverages PeripheralManager::getDiffBufferAverages() {
+    BufferAverages res = {BUF_INV, BUF_INV};
     // Return error if buffer not ready for use.
-    if(!rxEchoDifferences.readyForUse) return BUF_INV;
+    if(!rxHistoryBuffers.readyForUse) return res;
 
-    // Take the average and return.
-    signed long long sum = 0;
-    for(int i = 0; i < rxEchoDifferences.size; i++)
-        sum += rxEchoDifferences.buffer[i];
-    return ((float) sum)/((float) rxEchoDifferences.size);
+    // Take the averages and return.
+    signed long long echoSum = 0;
+    float distSum = 0;
+
+    for(int i = 0; i < rxHistoryBuffers.size; i++) {
+        echoSum += rxHistoryBuffers.echoBuffer[i];
+        distSum += rxHistoryBuffers.distBuffer[i];
+    }
+    
+    res.echoDiffAvg = ((float) echoSum)/((float) rxHistoryBuffers.size);
+    res.distAvg = ((float) distSum)/((float) rxHistoryBuffers.size);
+
+    return res;
 }
 
 bool PeripheralManager::isBufferReadyForUse() {
-    return rxEchoDifferences.readyForUse;
+    return rxHistoryBuffers.readyForUse;
+}
+
+void PeripheralManager::initBangBangCtrlConfig(){
+    followingLogicConfig.minSpeed = MIN_SPEED;
+    followingLogicConfig.maxSpeed = MAX_SPEED;
+    followingLogicConfig.defSpeed = DEFAULT_SPEED;
+    followingLogicConfig.targetDist = TARGET_DIST_CM;
+    followingLogicConfig.edLower = ECHO_DIFF_LOWER_BOUND;
+    followingLogicConfig.edUpper = ECHO_DIFF_UPPER_BOUND;
+    followingLogicConfig.kp = DEFAULT_KP;
+    followingLogicConfig.kz = DEFAULT_KZ;
+}
+
+void PeripheralManager::setFollowingLogicDifferentialGain(uint8_t k) {
+    this->followingLogicConfig.kp = k;
+}
+
+void PeripheralManager::setFollowingLogicDistanceGain(uint8_t k) {
+    this->followingLogicConfig.kz = k;
+}
+
+BangBangCtrlConfig *PeripheralManager::getFollowingLogicConfig() {
+    return &(this->followingLogicConfig);
 }
 
 void dump_rx_diff_info(signed long long lst, signed long long rst, signed long long let, signed long long ret) {
@@ -740,4 +852,54 @@ void dump_rx_diff_info(signed long long lst, signed long long rst, signed long l
         ((float)(let - lst))/74.0,      // Left Distance Recorded
         ((float)(ret - rst))/74.0       // Right Distance Recorded
     );
+}
+
+/**
+ * Initialize a mutex. 
+ * @param mutexPtr Pointer to the mutex to be initialized.
+ */
+bool initMutex(SemaphoreHandle_t *mutexPtr) {
+    bool res = false;
+    if(mutexPtr == NULL) log_e("Null function argument.");
+    else {
+        *mutexPtr = xSemaphoreCreateMutex();
+        res = *mutexPtr != NULL;
+    }
+    return res;
+}
+
+/**
+ * Grabs a mutex. This function will block the task it's called from
+ * for a certain amount of time in ticks with the default time being 
+ * the maximum allowable by the system unless otherwise specified.
+ * @param mutexPtr Pointer to the mutex to grab.
+ * @param timeout Timeout (in ticks) to wait try and grab the mutex. Defaults to 
+ * `portMAX_DELAY`.
+ */
+BaseType_t grabMutex(SemaphoreHandle_t *mutexPtr, TickType_t timeout) {
+    BaseType_t res = pdFAIL;
+    if(mutexPtr != NULL && *mutexPtr != NULL) {
+        res = xSemaphoreTake(*mutexPtr, timeout);
+    }
+    else {
+        if(mutexPtr == NULL) log_e("Null function argument.");
+        if(*mutexPtr == NULL) log_e("Function argument points to Null.");
+    }
+    return res;
+}
+
+/**
+ * Releases a mutex. 
+ * @param mutexPtr Pointer to the mutex to release.
+ */
+BaseType_t releaseMutex(SemaphoreHandle_t *mutexPtr) {
+    BaseType_t res = pdFAIL;
+    if(mutexPtr != NULL && *mutexPtr != NULL) {
+        res = xSemaphoreGive(*mutexPtr);
+    }
+    else {
+        if(mutexPtr == NULL) log_e("Null function argument.");
+        if(*mutexPtr == NULL) log_e("Function argument points to Null.");
+    }
+    return res;
 }

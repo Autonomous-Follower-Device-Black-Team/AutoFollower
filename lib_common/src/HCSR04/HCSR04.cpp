@@ -215,7 +215,8 @@ void HCSR04::pulseTrigger() {
 float HCSR04::computeInches() {
     float isrPulseDuration = (isrPulseEnd - isrPulseStart) * 1.0;
     float distanceInInches = (isrPulseDuration/2) / 74;
-    return distanceInInches;
+    bool isTransducer = (this->id == SensorID::leftRxTransducer || this->id == SensorID::rightRxTransducer);
+    return (isTransducer) ? distanceInInches*2 : distanceInInches;
 }
 
 void HCSR04::resetEchoTimestamps() {

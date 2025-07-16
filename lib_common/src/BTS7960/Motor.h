@@ -8,9 +8,9 @@
 #include <Arduino.h>
 
 #define PWM_FREQ 20000
-#define PWM_RES 8
+#define PWM_RES 9
 #define LED_C_LOW 0
-#define LED_C_HIGH 255
+#define LED_C_HIGH ((1 << PWM_RES) - 1)
 
 #define BASE_SPEED 200
 #define ROTATING_SPEED 150
