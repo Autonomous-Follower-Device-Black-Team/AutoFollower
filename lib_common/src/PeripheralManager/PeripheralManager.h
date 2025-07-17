@@ -75,14 +75,15 @@ typedef struct _us_times USTimeGroup;
 /*********************************************************
             Drive Subsystem Task Info.
 **********************************************************/
-#define MIN_SPEED 70
-#define MAX_SPEED 400
-#define DEFAULT_SPEED 150
-#define TARGET_DIST_CM 100
-#define ECHO_DIFF_LOWER_BOUND -5
-#define ECHO_DIFF_UPPER_BOUND 5
-#define DEFAULT_KP 0.5
-#define DEFAULT_KZ 100
+#define MIN_SPEED 80            // 100
+#define MAX_SPEED 200           // 400
+#define DEFAULT_SPEED 100       // 150
+#define TARGET_DIST_IN 3 * 12
+#define MAX__FOLLOW_DIST_IN 9 * 12
+#define ECHO_DIFF_LOWER_BOUND -75
+#define ECHO_DIFF_UPPER_BOUND 75
+#define DEFAULT_KP 0.1
+#define DEFAULT_KZ 50
 
 extern TaskHandle_t obs_det_stop_task_handle;
 extern TaskHandle_t mvmt_manager_task_handle;
@@ -95,7 +96,8 @@ struct _bang_bang_cfg {
     uint16_t minSpeed;      // Minimum allowable speed for each robot wheel
     uint16_t maxSpeed;      // Maximum allowable speed for each robot wheel.
     uint16_t defSpeed;      // Default speed for each robot wheel.
-    float targetDist;    // Average target distance (in cm).
+    float targetDist;       // Average target distance (in inches).
+    float maxDist;          // Maximum distance allowable for valid movement (in inches).
 
     /**
      * Lower Bound of the echo difference to be used in comparison and classification
