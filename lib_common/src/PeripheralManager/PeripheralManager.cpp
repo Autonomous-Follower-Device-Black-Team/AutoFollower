@@ -161,8 +161,10 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
     HCSR04 *right_obs = manager->fetchUS(SensorID::rightObsDet); 
 
     // Flags for Obstacle Logic.
-    int start_time = 0;
+    ulong start_time = 0;
+    ulong current_time;
     int buzzer = (int) S3BotPin::BUZZER_PIN;
+    pinMode(buzzer, OUTPUT);
 
     bool readingGood_L, readingGood_R;
     float getDistance_L, getDistance_R;
@@ -171,7 +173,6 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
     bool Breach_R;
 
     bool buzzer_on = false;
-    int current_time;
 
     NotificationMask last_notif = UNSET;
 
@@ -186,9 +187,11 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
 
         // Checks if the reading from Obs USS is good.
         if((readingGood_L && readingGood_R) && RX_DRIVE_SYSTEM_ON){
-            getDistance_L = left_obs->getDistanceReading();
-            getDistance_R = right_obs->getDistanceReading();
-            
+            //getDistance_L = left_obs->getDistanceReading();
+            //getDistance_R = right_obs->getDistanceReading();
+            getDistance_L = left_obs->getLastBufferAverage();
+            getDistance_R = right_obs->getLastBufferAverage();
+
             // Checks if obstacle is detected within bound.
             Breach_L = getDistance_L > 0 && getDistance_L <= BREACH_DISTANCE;
             Breach_R = getDistance_R > 0 && getDistance_R <= BREACH_DISTANCE;
@@ -202,34 +205,44 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
 
             // Notifies that an obstacle has been detected.
             if(Breach_L || Breach_R) {
-                if (obs_det_stop_task_handle != NULL) {
+                if (obs_det_stop_task_handle != NULL && last_notif != MOT_E_STOP) {
                     start_time = current_time;
                     buzzer_on = true;
                     digitalWrite(buzzer, HIGH);
-                    if (last_notif != MOT_E_STOP) {
-                        xTaskNotify(obs_det_stop_task_handle, MOT_E_STOP, eSetBits);
-                        last_notif = MOT_E_STOP;
-                        log_e("Obstacle detected & buzzer activated");
-                    }
+                    xTaskNotify(obs_det_stop_task_handle, MOT_E_STOP, eSetBits);
+                    last_notif = MOT_E_STOP;
+                    log_e("Obstacle detected & buzzer activated");
                 }
-                else log_e("Obstacle Detection Manager Task not notified. Null.");
+                else {
+                    if(obs_det_stop_task_handle == NULL) log_e("Obstacle Detection Manager Task not notified. Null.");
+                    else log_e("Obstacle Detection Manager Task not notified. E_STOP Sent Once Before.");
+                }
             }
 
             // Notifies that an obstacle is removed and motors can resume.
             else {
-                if (obs_det_stop_task_handle != NULL) {
+                if (obs_det_stop_task_handle != NULL && last_notif != MOT_RESUME) {
                     if(last_notif != MOT_RESUME) {
                         xTaskNotify(obs_det_stop_task_handle, MOT_RESUME, eSetBits); 
                         last_notif = MOT_RESUME;
                         log_e("Obstacle not detected, moving resumes");
                     }
                 }
-                else log_e("Obstacle Detection Manager Task not notified. Null.");
+                else {
+                    if(obs_det_stop_task_handle == NULL) log_e("Obstacle Detection Manager Task not notified. Null.");
+                    else log_e("Obstacle Detection Manager Task not notified. E_STOP Sent Once Before.");
+                }
             }
-        
         }
-        else log_e("Drive System Off. No Notification sent.");
-        vTaskDelayUntil(&xLastWakeTime, MAX_US_POLL_TIME);
+        else {
+            if(buzzer_on && (!readingGood_L && !readingGood_R)){
+                digitalWrite(buzzer, LOW);
+                buzzer_on = false;
+                log_e("Buzzer shuts up because of invalid reading");
+            }
+            if(!RX_DRIVE_SYSTEM_ON) log_e("Drive System Off. No Notification sent.");
+        }
+        vTaskDelayUntil(&xLastWakeTime, MAX_US_POLL_TIME + pdMS_TO_TICKS(10));
     }
 }
 

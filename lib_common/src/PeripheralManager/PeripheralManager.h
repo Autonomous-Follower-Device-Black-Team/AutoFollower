@@ -82,10 +82,10 @@ typedef struct _us_times USTimeGroup;
 #define DEFAULT_SPEED 100       // 150
 #define TARGET_DIST_IN 3 * 12
 #define MAX__FOLLOW_DIST_IN 9 * 12
-#define ECHO_DIFF_LOWER_BOUND -75
-#define ECHO_DIFF_UPPER_BOUND 75
-#define DEFAULT_KP 0.1
-#define DEFAULT_KZ 50
+#define ECHO_DIFF_LOWER_BOUND -5
+#define ECHO_DIFF_UPPER_BOUND 5
+#define DEFAULT_KP 3
+#define DEFAULT_KZ 1
 
 extern TaskHandle_t obs_det_stop_task_handle;
 extern TaskHandle_t mvmt_manager_task_handle;
