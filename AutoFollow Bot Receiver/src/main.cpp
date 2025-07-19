@@ -3,11 +3,7 @@
 #include "Config.h"
 #include "Device.h"
 
-///*
-void setupWifi();
-String getTimeDiff(bool end);
-
-Device bot(SocConfig::ESP32_S3_8MB, dev_S3_A, Mode::Receiver, true);
+Device bot(SocConfig::ESP32_S3_8MB, dev_C, Mode::Receiver, true);
 
 bool success = false;
 char info[1000]; 
@@ -29,7 +25,7 @@ void setup() {
     log_e("Bot Setup Complete.");
 }
 
-bool listPrinted = true;
+bool listPrinted = false;
 void loop() {
     if(!listPrinted) {
         vTaskList(info);
@@ -41,27 +37,3 @@ void loop() {
     }
     vTaskDelay(10000);
 }
-
-void setupWifi() {
-   
-    WiFi.begin(af_SSID, af_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(1000);
-        Serial.println("Connecting to WiFi..");
-    }
-}
-
-String getTimeDiff(bool end) {
-    PeripheralManager *m = bot.getPeripheralManager();
-    ulong diff = 0;
-    if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
-        USTimeGroup *g = m->getUsTimingGroup();
-        if(end) diff =  g->rightEndTime - g->leftEndTime;
-        else diff =  g->rightStartTime - g->leftStartTime;
-        xSemaphoreGive(rx_echo_time_mutex);
-    }
-    return String(diff);
-}
-
-//*/
-

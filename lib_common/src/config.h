@@ -13,7 +13,8 @@
 #define RX_ULTRASONIC_SYSTEM_ON 1
 #define TX_ULTRASONIC_SYSTEM_ON 1
 #define RX_DEBUG 0
-#define DUMP_RX_DIFF 1
+#define RX_DRIVE_DEBUG 0
+#define DUMP_RX_DIFF 0
 
 #define BAUD_RATE 115200
 
@@ -64,15 +65,15 @@ enum class _bot_pins_s3 : uint8_t {
     right_us_transducer_trig = 2,
     right_us_transducer_echo = 1,
 
-    left_hcsr04_trig = 15,
-    left_hcsr04_echo = 16,
-    right_hcsr04_trig = 17,
-    right_hcsr04_echo = 18,
+    left_hcsr04_trig = 13,
+    left_hcsr04_echo = 10,
+    right_hcsr04_trig = 12,
+    right_hcsr04_echo = 11,
 
-    left_mot_left_pwm = 9,
-    left_mot_right_pwm = 10,
-    right_mot_left_pwm = 11,
-    right_mot_right_pwm = 12,
+    left_mot_left_pwm = 4,
+    left_mot_right_pwm = 5,
+    right_mot_left_pwm = 18,
+    right_mot_right_pwm = 17,
 
     rgbLed = 38,
     BUZZER_PIN = 21
@@ -114,8 +115,8 @@ typedef _belt_pins_s3 S3BeltPin;
  * Belt (Transmitter) Pin defintions - ESP32 Config.
  */
 enum class _belt_pins : uint8_t {
-    single_uss_trig = 36,
-    single_uss_echo = 39,
+    single_uss_trig = 33,
+    single_uss_echo = 32,
 };
 typedef _belt_pins BeltPin;
 

@@ -76,10 +76,9 @@ void trig_rx_transducer_task(void *pvPeripheralManager) {
         readingGood = transducer->readSensor(RX_US_READ_TIME);
 
         // Grab the semaphore and set the times.
-        if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
-            manager->fillUsTimingGroup(transducer->identify());
-            xSemaphoreGive(rx_echo_time_mutex);
-        }
+        grabMutex(&rx_echo_time_mutex);
+        manager->fillUsTimingGroup(transducer->identify());
+        releaseMutex(&rx_echo_time_mutex);
 
         // Debug if necessary.
         if(RX_DEBUG) {
@@ -126,25 +125,24 @@ void left_right_rx_diff_task(void *pvPeripheralManager) {
         }
 
         // Grab the semaphore and grab the times.
-        if(xSemaphoreTake(rx_echo_time_mutex, portMAX_DELAY) == pdTRUE) {
-            lst = timingGroup->leftStartTime;
-            let = timingGroup->leftEndTime;
-            rst = timingGroup->rightStartTime;
-            ret = timingGroup->rightEndTime;
-            xSemaphoreGive(rx_echo_time_mutex);
-        }
+        grabMutex(&rx_echo_time_mutex);
+        lst = timingGroup->leftStartTime;
+        let = timingGroup->leftEndTime;
+        rst = timingGroup->rightStartTime;
+        ret = timingGroup->rightEndTime;
+        releaseMutex(&rx_echo_time_mutex);
     
         // Dump data if debugging.
         if(DUMP_RX_DIFF) dump_rx_diff_info(lst, rst, let, ret);
 
-        // Compute and store difference between echo high times (right biased).
-        //difference = (ret - rst) - (let - lst);
+        // Compute difference between echo high times (right biased) and avg distance.
         echoDifference = ret - let;
-        avgDistance = (leftRx->getDistanceReading() + rightRx->getDistanceReading())/2;  
-        if(xSemaphoreTake(echo_diff_buffer_mutex, portMAX_DELAY) == pdTRUE) {
-            manager->addToBuffers(echoDifference, avgDistance);
-            xSemaphoreGive(echo_diff_buffer_mutex);
-        }
+        avgDistance = (leftRx->getDistanceReading() + rightRx->getDistanceReading())/2; 
+
+        // Store difference and distance history.
+        grabMutex(&echo_diff_buffer_mutex);
+        manager->addToBuffers(echoDifference, avgDistance);
+        releaseMutex(&echo_diff_buffer_mutex);
 
         // Notify the movement manager Task given that data is ready.
         if(manager->isBufferReadyForUse() && RX_DRIVE_SYSTEM_ON) {
@@ -277,7 +275,7 @@ void mvmt_manager_task(void *pvPeripheralManager) {
     BufferAverages rxBuffers;
     uint8_t steeringOffset, distanceOffset;
     uint16_t leftMotSpeed, rightMotSpeed;
-    bool validMovePossible = false;
+    bool validMovePossible = false, steeringOffsetRequired = false;
 
     for(;;) {
         // Block until notified.
@@ -289,24 +287,19 @@ void mvmt_manager_task(void *pvPeripheralManager) {
             continue;;
         }
 
-        /*
-        if(xSemaphoreTake(echo_diff_buffer_mutex, portMAX_DELAY) == pdTRUE) {
-            avgEchoDiff = manager->getDiffBufferAverage();
-            xSemaphoreGive(echo_diff_buffer_mutex);
-        }
-        */
-
         // Grab new difference and distance data.
         grabMutex(&echo_diff_buffer_mutex);
         rxBuffers = manager->getDiffBufferAverages();
         releaseMutex(&echo_diff_buffer_mutex);
         
         // Compute offsets, speeds, movement status.
+        steeringOffsetRequired = rxBuffers.echoDiffAvg < driveCfg->edLower || rxBuffers.echoDiffAvg > driveCfg->edUpper;
         distanceOffset = (uint8_t) (driveCfg->kz * (1 - driveCfg->targetDist/rxBuffers.distAvg));
-        steeringOffset = (uint8_t) (driveCfg->kp *  rxBuffers.echoDiffAvg);
+        steeringOffset = (steeringOffsetRequired) ? (uint8_t) (driveCfg->kp *  rxBuffers.echoDiffAvg) : 0;
+       
         leftMotSpeed = driveCfg->defSpeed + distanceOffset + steeringOffset;
         rightMotSpeed = driveCfg->defSpeed + distanceOffset - steeringOffset;
-        validMovePossible = rxBuffers.distAvg > (driveCfg->targetDist * 1.05); // Current distance > 5% of target distance.
+        validMovePossible = (rxBuffers.distAvg > (driveCfg->targetDist * 1.05)) && (rxBuffers.distAvg < driveCfg->maxDist); 
 
         // Clamp Motor Speeds.
         if(leftMotSpeed > driveCfg->maxSpeed) leftMotSpeed = driveCfg->maxSpeed;
@@ -315,6 +308,10 @@ void mvmt_manager_task(void *pvPeripheralManager) {
         if(rightMotSpeed > driveCfg->maxSpeed) rightMotSpeed = driveCfg->maxSpeed;
         else if(rightMotSpeed < driveCfg->minSpeed) rightMotSpeed = driveCfg->maxSpeed;
 
+        if(validMovePossible) {
+            Serial.printf("wL = %d, wR = %d,\n", leftMotSpeed, rightMotSpeed);
+        }
+
         // Drive.
         grabMutex(&drive_system_mutex);
         
@@ -322,36 +319,37 @@ void mvmt_manager_task(void *pvPeripheralManager) {
         switch(driveSystem->getMovementState()) {
             case (MovementState::EMG_STOP):
                 // Do nothing.
+                if(RX_DRIVE_DEBUG) log_e("Mvmt State[E_STOP]: Motors Stopped! Obstacle Detected");
                 break;
 
             case (MovementState::PAUSED):
                 if(validMovePossible) {
                     driveSystem->move(leftMotSpeed, rightMotSpeed);
                     driveSystem->setMovementState(MovementState::MOVING);
+                    if(RX_DRIVE_DEBUG) log_e("Mvmt State[PAUSED]: Valid Move Possible --> Motors set to MOVING.");
+                }
+                else {
+                    if(RX_DRIVE_DEBUG) log_e("Mvmt State[PAUSED]: Valid Move NOT Possible: %f --> Motors remain PAUSED.", rxBuffers.distAvg);
                 }
                 break;
 
             case (MovementState::MOVING):
-                if(validMovePossible) driveSystem->move(leftMotSpeed, rightMotSpeed);
+                if(validMovePossible) {
+                    driveSystem->move(leftMotSpeed, rightMotSpeed);
+                    if(RX_DRIVE_DEBUG) log_e("Mvmt State[MOVING]: Valid Move Possible --> Motors remain MOVING.");
+                }
                 else {
                     driveSystem->stop();
                     driveSystem->setMovementState(MovementState::PAUSED);
+                    if(RX_DRIVE_DEBUG) log_e("Mvmt State[MOVING]: Valid Move NOT Possible: %f --> Motors set to PAUSED.", rxBuffers.distAvg);
                 }   
                 break;
                 
             default:
-                log_e("Errant Following Movement State...");
+                if(RX_DRIVE_DEBUG) log_e("Errant Following Movement State...");
                 break;
         }
         
-        if(driveSystem->getMovementState() != MovementState::EMG_STOP) {
-            
-            // Check to see if within valid following Distance.
-            if(validMovePossible) {
-                driveSystem->move(leftMotSpeed, rightMotSpeed);
-            }
-            else driveSystem->stop();
-        }
         releaseMutex(&drive_system_mutex);
     
 
@@ -406,6 +404,7 @@ void PeripheralManager::initUS() {
         rightRxTransducer->attachTaskHandle(&trig_right_rx_transducer_task_handle);
         leftObsDetUS->attachTaskHandle(&poll_obs_detection_uss_handle);
         rightObsDetUS->attachTaskHandle(&poll_obs_detection_uss_handle);
+
     }
     log_e("Ultrasonic Subsystem Initialized.");
 }
@@ -423,21 +422,20 @@ void PeripheralManager::createSemaphores() {
         if(RX_ULTRASONIC_SYSTEM_ON) {
             //rx_echo_time_mutex = xSemaphoreCreateMutex();
             success = initMutex(&rx_echo_time_mutex);
-            if(success) log_e("Echo Timing Mutex not created");
+            if(!success) log_e("Echo Timing Mutex not created");
             else log_e("Echo Timing Mutex created.");
 
             //echo_diff_buffer_mutex = xSemaphoreCreateMutex();
             success = initMutex(&echo_diff_buffer_mutex);
-            if(success) log_e("Echo Difference History Mutex not created.");
+            if(!success) log_e("Echo Difference History Mutex not created.");
             else log_e("Echo Difference History Mutex created.");
         }
 
         if(RX_DRIVE_SYSTEM_ON) {
             success = initMutex(&drive_system_mutex);
-            if(success != true) log_e("Drive System Mutex not created.");
+            if(!success) log_e("Drive System Mutex not created.");
             else log_e("Drive System Mutex created.");
         }
-        else log_e("Rx Ultrasonic Subsystem Event Groups not created. Check config.");
     }
 }
 
@@ -796,6 +794,7 @@ void PeripheralManager::initDriveSystem() {
     if(this->isTransmitter() == false) {
         this->driveSystem->init();
         this->initBangBangCtrlConfig();
+        log_e("Drive Subsystem Initialized.");
     }
 }
 
@@ -876,7 +875,8 @@ void PeripheralManager::initBangBangCtrlConfig(){
     followingLogicConfig.minSpeed = MIN_SPEED;
     followingLogicConfig.maxSpeed = MAX_SPEED;
     followingLogicConfig.defSpeed = DEFAULT_SPEED;
-    followingLogicConfig.targetDist = TARGET_DIST_CM;
+    followingLogicConfig.targetDist = TARGET_DIST_IN;
+    followingLogicConfig.maxDist = MAX__FOLLOW_DIST_IN;
     followingLogicConfig.edLower = ECHO_DIFF_LOWER_BOUND;
     followingLogicConfig.edUpper = ECHO_DIFF_UPPER_BOUND;
     followingLogicConfig.kp = DEFAULT_KP;
@@ -907,8 +907,8 @@ void dump_rx_diff_info(signed long long lst, signed long long rst, signed long l
     signed long long echoEndDiff = ret - let;
     bool diffPosAndLarger = (echoEndDiff > 0) && (echoEndDiff >= RX_DIFF_INVALID);
     bool diffNegAndSmaller = (echoEndDiff < 0) && (echoEndDiff <= -1*RX_DIFF_INVALID);
-    if(diffPosAndLarger) echoEndDiff = RX_DIFF_INVALID;
-    else if(diffNegAndSmaller) echoEndDiff = -1*RX_DIFF_INVALID;
+    //if(diffPosAndLarger) echoEndDiff = RX_DIFF_INVALID;
+    //else if(diffNegAndSmaller) echoEndDiff = -1*RX_DIFF_INVALID;
 
     Serial.printf("%d; %lld; %lld; %lld; %lld; %lld; %lld; %lld; %lld; %f; %f\n", 
         count++,                        // Counter.

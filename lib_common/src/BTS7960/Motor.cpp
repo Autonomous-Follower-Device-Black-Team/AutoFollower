@@ -2,8 +2,15 @@
 
 void Motor::init() {
     // Set motor terminals as PWM outputs.
+    
+    //pinMode(posTerm, OUTPUT);
+    //pinMode(negTerm, OUTPUT);
+
     ledcAttach(posTerm, PWM_FREQ, PWM_RES);
     ledcAttach(negTerm, PWM_FREQ, PWM_RES);
+    ledcWrite(posTerm, LED_C_LOW);
+    ledcWrite(negTerm, LED_C_LOW);
+    enabled = true;
 }
 
 void Motor::spinCW() {
