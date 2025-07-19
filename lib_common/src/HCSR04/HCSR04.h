@@ -147,7 +147,7 @@ class HCSR04 {
          * @param xMaxBlockTime The maximum time allotted to read a sensor.
          * @return True if the reading was successful, false otherwise.
          */
-        bool readSensor(TickType_t xMaxBlockTime);
+        bool readSensor(TickType_t xMaxBlockTime = US_READ_TIME);
 
         /**
          * Mark a sensor as relevant for output collection.

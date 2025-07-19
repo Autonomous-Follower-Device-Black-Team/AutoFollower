@@ -74,7 +74,8 @@ enum class _bot_pins_s3 : uint8_t {
     right_mot_left_pwm = 11,
     right_mot_right_pwm = 12,
 
-    rgbLed = 38
+    rgbLed = 38,
+    BUZZER_PIN = 21
 };
 typedef _bot_pins_s3 S3BotPin;
 

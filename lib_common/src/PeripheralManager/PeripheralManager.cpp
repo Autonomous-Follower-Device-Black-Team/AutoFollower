@@ -157,10 +157,81 @@ void left_right_rx_diff_task(void *pvPeripheralManager) {
 
 void poll_obs_detection_uss_task(void *pvPeripheralManager) {
     // Initialize task.
+    PeripheralManager *manager = static_cast<PeripheralManager *>(pvPeripheralManager);
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    HCSR04 *left_obs = manager->fetchUS(SensorID::leftObsDet); 
+    HCSR04 *right_obs = manager->fetchUS(SensorID::rightObsDet); 
+
+    // Flags for Obstacle Logic.
+    int start_time = 0;
+    int buzzer = (int) S3BotPin::BUZZER_PIN;
+
+    bool readingGood_L, readingGood_R;
+    float getDistance_L, getDistance_R;
+
+    bool Breach_L;
+    bool Breach_R;
+
+    bool buzzer_on = false;
+    int current_time;
+
+    NotificationMask last_notif = UNSET;
 
     // Begin task loop.
     for(;;) {
-        vTaskDelay(1000);
+        // Something for the buzzer. (grabs current time).
+        current_time = millis();
+
+        // Reads the Obs USS.
+        readingGood_L = left_obs->readSensor(US_READ_TIME);
+        readingGood_R = right_obs->readSensor(US_READ_TIME);
+
+        // Checks if the reading from Obs USS is good.
+        if((readingGood_L && readingGood_R) && RX_DRIVE_SYSTEM_ON){
+            getDistance_L = left_obs->getDistanceReading();
+            getDistance_R = right_obs->getDistanceReading();
+            
+            // Checks if obstacle is detected within bound.
+            Breach_L = getDistance_L > 0 && getDistance_L <= BREACH_DISTANCE;
+            Breach_R = getDistance_R > 0 && getDistance_R <= BREACH_DISTANCE;
+
+            // Turns buzzer off after set time.
+            if (buzzer_on && (current_time - start_time > STOP_SCREAMING)){
+                digitalWrite(buzzer, LOW);
+                buzzer_on = false;
+                log_e("Buzzer shuts up");
+            }
+
+            // Notifies that an obstacle has been detected.
+            if(Breach_L || Breach_R) {
+                if (obs_det_stop_task_handle != NULL) {
+                    start_time = current_time;
+                    buzzer_on = true;
+                    digitalWrite(buzzer, HIGH);
+                    if (last_notif != MOT_E_STOP) {
+                        xTaskNotify(obs_det_stop_task_handle, MOT_E_STOP, eSetBits);
+                        last_notif = MOT_E_STOP;
+                        log_e("Obstacle detected & buzzer activated");
+                    }
+                }
+                else log_e("Obstacle Detection Manager Task not notified. Null.");
+            }
+
+            // Notifies that an obstacle is removed and motors can resume.
+            else {
+                if (obs_det_stop_task_handle != NULL) {
+                    if(last_notif != MOT_RESUME) {
+                        xTaskNotify(obs_det_stop_task_handle, MOT_RESUME, eSetBits); 
+                        last_notif = MOT_RESUME;
+                        log_e("Obstacle not detected, moving resumes");
+                    }
+                }
+                else log_e("Obstacle Detection Manager Task not notified. Null.");
+            }
+        
+        }
+        else log_e("Drive System Off. No Notification sent.");
+        vTaskDelayUntil(&xLastWakeTime, MAX_US_POLL_TIME);
     }
 }
 

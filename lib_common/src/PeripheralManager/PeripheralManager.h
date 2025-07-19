@@ -27,7 +27,9 @@ void dump_rx_diff_info(signed long long lst, signed long long rst, signed long l
 **********************************************************/
 #define RX_TTR_OFFSET 5     // Offset from normal ultrasonic readtime for receiver only.    
 #define RX_US_READ_TIME ((milliSeconds) pdMS_TO_TICKS(TTR_US - RX_TTR_OFFSET))      // The maximum time it takes to read a receiving only transducer (in ticks).
-#define MAX_US_POLL_TIME ((4 * US_READ_TIME) + 10)                                  // The delay between polling all 4 ultrasonic sensors w/ some buffer time.
+#define MAX_US_POLL_TIME ((2 * US_READ_TIME) + 10)                                  // The delay between polling the 2 obstacle detection sensors w/ some buffer time.
+#define BREACH_DISTANCE 20                                                          // Sets obstacle detection distance to 20 in.
+#define STOP_SCREAMING 600                                                          // Sets buzzer time-out to 600 ms.
 
 #define RX_DIFF_INVALID 300
 #define BUF_INV ((float) -710.0)
