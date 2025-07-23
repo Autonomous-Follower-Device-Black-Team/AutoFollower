@@ -183,14 +183,15 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
 
         // Reads the Obs USS.
         readingGood_L = left_obs->readSensor(US_READ_TIME);
+        vTaskDelay(US_READ_TIME);
         readingGood_R = right_obs->readSensor(US_READ_TIME);
 
         // Checks if the reading from Obs USS is good.
         if((readingGood_L && readingGood_R) && RX_DRIVE_SYSTEM_ON){
-            //getDistance_L = left_obs->getDistanceReading();
-            //getDistance_R = right_obs->getDistanceReading();
-            getDistance_L = left_obs->getLastBufferAverage();
-            getDistance_R = right_obs->getLastBufferAverage();
+            getDistance_L = left_obs->getDistanceReading();
+            getDistance_R = right_obs->getDistanceReading();
+            //getDistance_L = left_obs->getLastBufferAverage();
+            //getDistance_R = right_obs->getLastBufferAverage();
 
             // Checks if obstacle is detected within bound.
             Breach_L = getDistance_L > 0 && getDistance_L <= BREACH_DISTANCE;
@@ -230,7 +231,7 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
                 }
                 else {
                     if(obs_det_stop_task_handle == NULL) log_e("Obstacle Detection Manager Task not notified. Null.");
-                    else log_e("Obstacle Detection Manager Task not notified. E_STOP Sent Once Before.");
+                    else log_e("Obstacle Detection Manager Task not notified. MOT_RESUME Sent Once Before.");
                 }
             }
         }
@@ -244,6 +245,7 @@ void poll_obs_detection_uss_task(void *pvPeripheralManager) {
         }
         vTaskDelayUntil(&xLastWakeTime, MAX_US_POLL_TIME + pdMS_TO_TICKS(10));
     }
+
 }
 
 void obs_det_stop_task(void *pvPeripheralManager) {
@@ -286,9 +288,10 @@ void mvmt_manager_task(void *pvPeripheralManager) {
     BTS7960 *driveSystem = manager->getDriveSystem();
     BangBangCtrlConfig *driveCfg = manager->getFollowingLogicConfig();
     BufferAverages rxBuffers;
-    uint8_t steeringOffset, distanceOffset;
+    int8_t steeringOffset, distanceOffset;
     uint16_t leftMotSpeed, rightMotSpeed;
-    bool validMovePossible = false, steeringOffsetRequired = false;
+    uint8_t invalidCount = 0;
+    bool validMovePossible = false, steeringOffsetRequired = false, validDist = false, validEchoDiff = false;
 
     for(;;) {
         // Block until notified.
@@ -306,23 +309,27 @@ void mvmt_manager_task(void *pvPeripheralManager) {
         releaseMutex(&echo_diff_buffer_mutex);
         
         // Compute offsets, speeds, movement status.
-        steeringOffsetRequired = rxBuffers.echoDiffAvg < driveCfg->edLower || rxBuffers.echoDiffAvg > driveCfg->edUpper;
-        distanceOffset = (uint8_t) (driveCfg->kz * (1 - driveCfg->targetDist/rxBuffers.distAvg));
-        steeringOffset = (steeringOffsetRequired) ? (uint8_t) (driveCfg->kp *  rxBuffers.echoDiffAvg) : 0;
+        steeringOffsetRequired = abs(rxBuffers.echoDiffAvg) >= driveCfg->edBound;
+        distanceOffset = (int8_t) (driveCfg->kz * (1 - driveCfg->targetDist/rxBuffers.distAvg));
+        steeringOffset = (steeringOffsetRequired) ? (int8_t) (driveCfg->kp * rxBuffers.echoDiffAvg) : 0;
        
-        leftMotSpeed = driveCfg->defSpeed + distanceOffset + steeringOffset;
-        rightMotSpeed = driveCfg->defSpeed + distanceOffset - steeringOffset;
-        validMovePossible = (rxBuffers.distAvg > (driveCfg->targetDist * 1.05)) && (rxBuffers.distAvg < driveCfg->maxDist); 
+        leftMotSpeed = driveCfg->defSpeed + distanceOffset - steeringOffset;
+        rightMotSpeed = driveCfg->defSpeed + distanceOffset + steeringOffset + R_MOT_OFFSET;
+        validDist = (rxBuffers.distAvg > (driveCfg->targetDist * 1.05)) && (rxBuffers.distAvg < driveCfg->maxDist); 
+        validEchoDiff = abs(rxBuffers.echoDiffAvg) < MAX_ECHO_DIFF;
+        validMovePossible = validDist && validEchoDiff;
 
         // Clamp Motor Speeds.
         if(leftMotSpeed > driveCfg->maxSpeed) leftMotSpeed = driveCfg->maxSpeed;
-        else if(leftMotSpeed < driveCfg->minSpeed) leftMotSpeed = driveCfg->maxSpeed;
+        else if(leftMotSpeed < driveCfg->minSpeed) leftMotSpeed = driveCfg->minSpeed;
 
         if(rightMotSpeed > driveCfg->maxSpeed) rightMotSpeed = driveCfg->maxSpeed;
-        else if(rightMotSpeed < driveCfg->minSpeed) rightMotSpeed = driveCfg->maxSpeed;
-
+        else if(rightMotSpeed < driveCfg->minSpeed) rightMotSpeed = driveCfg->minSpeed;
+        
         if(validMovePossible) {
-            Serial.printf("wL = %d, wR = %d,\n", leftMotSpeed, rightMotSpeed);
+            Serial.printf("EchoDiffAvg: %f, wL = %d, wR = %d,\n", rxBuffers.echoDiffAvg, leftMotSpeed, rightMotSpeed);
+            Serial.printf("Distance Offset: %d, Steering Offset: %d\n", distanceOffset, steeringOffset);
+            Serial.println("---------------------------");
         }
 
         // Drive.
@@ -365,7 +372,6 @@ void mvmt_manager_task(void *pvPeripheralManager) {
         
         releaseMutex(&drive_system_mutex);
     
-
         // Print avg.
         //Serial.printf("%f\n", avgEchoDiff);
 
@@ -890,8 +896,7 @@ void PeripheralManager::initBangBangCtrlConfig(){
     followingLogicConfig.defSpeed = DEFAULT_SPEED;
     followingLogicConfig.targetDist = TARGET_DIST_IN;
     followingLogicConfig.maxDist = MAX__FOLLOW_DIST_IN;
-    followingLogicConfig.edLower = ECHO_DIFF_LOWER_BOUND;
-    followingLogicConfig.edUpper = ECHO_DIFF_UPPER_BOUND;
+    followingLogicConfig.edBound = ECHO_DIFF_UPPER_BOUND;
     followingLogicConfig.kp = DEFAULT_KP;
     followingLogicConfig.kz = DEFAULT_KZ;
 }

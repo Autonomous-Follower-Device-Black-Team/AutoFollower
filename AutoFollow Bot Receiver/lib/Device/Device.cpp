@@ -70,8 +70,10 @@ BaseType_t Device::processDataSent(const char* data) {
 }
 
 void Device::init() {
+    createOneshotEspTimer(TTR_US);
     startPeripheralManager();
     startESPNow(WiFi.status() == WL_CONNECTED);
+    log_e("Bot Setup Complete.");
 }
 
 void Device::startPeripheralManager()  {

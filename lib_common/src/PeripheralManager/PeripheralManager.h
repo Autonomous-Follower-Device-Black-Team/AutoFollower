@@ -78,14 +78,18 @@ typedef struct _us_times USTimeGroup;
             Drive Subsystem Task Info.
 **********************************************************/
 #define MIN_SPEED 80            // 100
-#define MAX_SPEED 200           // 400
+#define MAX_SPEED 256           // 400
 #define DEFAULT_SPEED 100       // 150
+
+#define R_MOT_OFFSET 76         // Right Motor speed offset.
+
 #define TARGET_DIST_IN 3 * 12
 #define MAX__FOLLOW_DIST_IN 9 * 12
-#define ECHO_DIFF_LOWER_BOUND -5
-#define ECHO_DIFF_UPPER_BOUND 5
-#define DEFAULT_KP 3
-#define DEFAULT_KZ 1
+#define ECHO_DIFF_UPPER_BOUND 10
+#define MAX_ECHO_DIFF 500
+#define MAX_INVALID_COUNT
+#define DEFAULT_KP 0.7
+#define DEFAULT_KZ 100
 
 extern TaskHandle_t obs_det_stop_task_handle;
 extern TaskHandle_t mvmt_manager_task_handle;
@@ -102,16 +106,10 @@ struct _bang_bang_cfg {
     float maxDist;          // Maximum distance allowable for valid movement (in inches).
 
     /**
-     * Lower Bound of the echo difference to be used in comparison and classification
+     * Bound of the echo difference to be used in comparison and classification
      * of which of the two receivers got the ping from the transmitter first.
      */
-    uint8_t edLower;
-
-    /**
-     * Upper Bound of the echo difference to be used in comparison and classification
-     * of which of the two receivers got the ping from the transmitter first.
-     */
-    uint8_t edUpper;
+    uint8_t edBound;
     
     /**
      * The turning (or differential) multiplier. Multiplies the Echo Diff to get a proportional steering
